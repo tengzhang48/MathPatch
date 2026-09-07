@@ -640,10 +640,33 @@ proposed changing ArtifactCert's canonical text first.
 3. **Collapse the remaining duplicate run/offset computations** so MathPatch and ArtifactCert
    cannot drift (F6).
 
-4. **Measure what is still refused.** Specifically: of real authorized changes on math-bearing
-   paragraphs, how many are *replacements* spanning a math boundary that the deletion-only
-   decomposition cannot express (F2)? Only that number decides whether generalized holes are
-   worth building. Do not build them first.
+4. **Measure what is still refused — ANSWERED 2026-09-07, and the answer is "2".**
+   `tools/measure_math_refusals.py` replays the pinned engine's exact decision path over every
+   `change_spec_items` row in the real ledgers — 364 authorized edits across three projects:
+
+   | bucket | count | |
+   |---|---|---|
+   | no math in the paragraph | 313 | works |
+   | outside the math boundary | 40 | works |
+   | deletion around math (decomposition) | 2 | works |
+   | **replacement crossing math** | **2** | **refused** |
+   | refused for a non-math reason | 7 | not a math problem |
+   | preimage not locatable | 0 | |
+
+   51 of the 364 edits touch a math-bearing paragraph. Exactly **2** are blocked by the
+   cross-equation replacement case, **0.5% of all authorized edits**, and both are the same
+   locator (`body/p/309`) in one manuscript.
+
+   **Therefore generalized holes are NOT justified and will not be built.** Two edits in the
+   entire correction history belong to Word or to a human; complicating the seam for them would
+   buy 0.5% while delaying the capability nothing else has. This is the measurement deciding the
+   scope, which is what it was for.
+
+   Incidental finding: the deletion-only decomposition fires just twice in the whole history, so
+   it is a real but rare path. And the 7 non-math refusals are
+   `PATCH_NOT_SAFE_COMMENT_ANCHOR_IN_TARGET` (3), `PATCH_PROTECTED_CITATION_MANAGER_FIELD` (2),
+   `PATCH_NOT_SAFE_SYMBOL_IN_TARGET` (2) — the last confirming that F8's symbol boundary is live
+   in practice, not theoretical.
 
 Not in M1: the sentinel in persisted text, a new address space (F4), generalized holes.
 
@@ -692,6 +715,115 @@ gets that direction from `dwml` for display (F9), so competing on conversion wou
 duplication.
 
 
+## 7a. ParagraphProjection — the frozen data model (for review before implementation)
+
+This is the seam both packages consume. Changing its shape after ArtifactCert depends on it
+costs far more than another review round, so it is specified here before it is built.
+
+### Shape
+
+```
+ParagraphProjection
+    patch_text : str                     # PRIMARY. == artifactcert _para_text
+    segments   : tuple[Segment, ...]     # document order
+    anomalies  : tuple[str, ...]
+
+    sentinel_text : str                  # DERIVED view, not primary
+    math_segments : tuple[MathSegment, ...]
+
+TextSegment
+    source_element  : w:r                # the DIRECT w:r child, not the w:t
+    text_elements   : tuple[w:t, ...]    # what a writer rewrites
+    source_path     : tuple[int, ...]
+    text            : str
+    patch_start     : int
+    patch_end       : int                # patch_end - patch_start == len(text)
+
+MathSegment
+    source_element  : m:oMath | m:oMathPara   # OUTERMOST only
+    source_path     : tuple[int, ...]
+    patch_boundary  : int                # zero-width position in patch_text
+    ordinal         : int                # 0..n-1 in document order
+    kind            : "oMath" | "oMathPara"
+    fingerprint     : (kind, ordinal, patch_boundary, source_path, c14n_sha256)
+
+OpaqueSegment
+    source_element  : etree._Element
+    source_path     : tuple[int, ...]
+    patch_boundary  : int
+    tag             : str                # qualified tag, verbatim
+    local_name      : str                # "sym" | "hyperlink" | "fldSimple" | "sdt" | "ins" | ...
+```
+
+### Two decisions worth arguing about
+
+**`patch_text` becomes primary and the sentinel stream becomes a derived view.** Today it is the
+other way round: `Projection.text` is the sentinel stream. The consumer's coordinates are the
+ones that decide which characters an edit overwrites, so they should be the primary ones, and the
+sentinel should be what it actually is — a rendering convenience for showing a reviewer where an
+equation sits in a sentence. This is a breaking rename (`text` -> `sentinel_text`), and it is
+much cheaper now than after integration.
+
+**`TextSegment` is per-`w:r`, not per-`w:t`.** ArtifactCert's `RunFragment` is
+`(run, start, end)` over a direct `w:r` child, and the whole point of the segment map is that its
+analyzer and writer stop rebuilding those offsets. So a `TextSegment` maps 1:1 onto a
+`RunFragment`, with `text_elements` exposing the `w:t` nodes a writer actually rewrites (there may
+be several, and `_para_text` reaches nested ones — F6).
+
+### `opaque` means "MathPatch does not interpret this" — never "these are equivalent"
+
+`OpaqueSegment` carries the qualified tag and the structural position, and **nothing else**.
+MathPatch must never report that something "is a citation", that a `w:sym` "means σ", or that a
+content control "is safe". Those are Word-fidelity and review-policy judgements, and they belong
+to the consumer:
+
+```
+MathPatch      structural map: text segments, math boundaries, opaque segments,
+               each with its source element and path
+                    │
+                    ├── ArtifactCert patch_text   selects the w:t stream
+                    └── ArtifactCert review_text   adds its own w:sym decoding
+                                                   and fidelity rules
+```
+
+The API must therefore expose enough for a consumer to distinguish `w:sym`, hyperlink, field,
+content control, revision wrapper, and unknown element **without MathPatch classifying them**.
+Naming the tag does that; a shared `opaque` bucket with hidden policy behind it would not.
+
+### Invariants (each becomes an adversarial test before integration)
+
+1. **Text partition.** Concatenating every `TextSegment.text` in order yields exactly
+   `patch_text` — no gaps, no overlaps, no reordering.
+2. **Contiguity.** `TextSegment` extents are non-overlapping and non-decreasing, and every
+   character of `patch_text` belongs to exactly one.
+3. **Zero width.** `MathSegment` and `OpaqueSegment` have a `patch_boundary` and no extent; they
+   consume no character of `patch_text`.
+4. **Drift.** `patch_text == artifactcert.docx_manifest._para_text(p)`, byte for byte, on every
+   paragraph of the corpus. This is the existing gate and it stays.
+5. **Total, non-overlapping math.** Every math element in the paragraph is exactly one
+   `MathSegment` or a descendant of exactly one. `m:oMathPara` is one segment, never two.
+6. **Ordinals.** `MathSegment.ordinal` runs 0..n-1 in document order and indexes
+   `math_segments`.
+7. **The crossing rule is the consumer's.** `crosses_math_boundary(start, end)` returns exactly
+   the `MathSegment`s with `start < patch_boundary < end` — strict both sides, matching
+   ArtifactCert `0992741`.
+8. **No interpretation.** No segment field carries a decoded value or a semantic class. An
+   `OpaqueSegment` for a `w:sym` exposes the tag and position, never the glyph it maps to.
+9. **Derived view agrees.** `sentinel_text` with sentinels removed equals `patch_text`, and each
+   `MathSegment`'s sentinel position minus its ordinal equals its `patch_boundary`.
+10. **Refusal, not repair.** An authored U+FFFC raises `SentinelCollision`; a shape MathPatch
+    cannot place is reported in `anomalies` rather than silently dropped.
+11. **Path identity.** `source_path` uniquely identifies an element's position within the
+    paragraph, and two distinct segments never share one.
+12. **Fingerprint sensitivity.** `MathSegment.fingerprint` changes if the equation's contents
+    change, its `patch_boundary` changes, or its `source_path` changes; and does not change when
+    unrelated text in the paragraph is edited.
+
+### What this model deliberately does not have
+
+No holes machinery (measured unnecessary — M1 item 4), no equation address space (F4: ArtifactCert
+already owns it), no `review_text`, no symbol decoding, no persisted-identity role.
+
 ## 8. Non-goals
 
 Not a CAS. Not equation OCR. Not a Word replacement. Not a general DOCX converter. Not a
@@ -739,6 +871,9 @@ payload hashes, protected-span C14N digests, ArtifactCert binding re-verificatio
         probe_offset_skew.py       # reproduces F7 against ArtifactCert's own code
         make_fixture_docx.py       # shapes the real corpus lacks (wrapper-nested math)
         verify_m0.sh               # one command: tests + fixture + probe + gate
+        test_local.sh              # CI-equivalent; needs only this repo
+        make_evidence.py           # M0_EVIDENCE.json, fails closed on the pin
+        measure_math_refusals.py   # answered M1 item 4: 2 of 364
     tests/
         fixtures/descent.docx   # generated; the only source of wrapper-nested math
 
