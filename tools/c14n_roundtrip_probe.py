@@ -46,6 +46,21 @@ def qn(local: str) -> str:
     return f"{{{W}}}{local}"
 
 
+def parse_hardened(xml: bytes) -> etree._Element:
+    """Same parser assumptions as the production path: no DTD, no entities, no
+    network, and a DOCTYPE is refused. An audit probe that parsed more permissively
+    than the code it certifies would be measuring a different document.
+    """
+    parser = etree.XMLParser(
+        resolve_entities=False, load_dtd=False, no_network=True,
+        recover=False, huge_tree=False, remove_comments=False,
+    )
+    root = etree.fromstring(xml, parser=parser)
+    if root.getroottree().docinfo.doctype:
+        raise ValueError("refused: document.xml declares a DOCTYPE")
+    return root
+
+
 def outermost_math(el: etree._Element):
     """Outermost math descendants in document order; never recurse into a match.
 
@@ -100,11 +115,11 @@ def pick_paragraph(root: etree._Element, *, with_math: bool) -> etree._Element |
 
 def roundtrip(root: etree._Element) -> etree._Element:
     """Exactly what the engine does to a part: serialize the mutated tree, reparse it."""
-    return etree.fromstring(etree.tostring(root))
+    return parse_hardened(etree.tostring(root))
 
 
 def scenario(raw: bytes, name: str, mutate) -> dict:
-    root = etree.fromstring(raw)
+    root = parse_hardened(raw)
     before_raw, before_c14n = digests(root)
     note = mutate(root) if mutate else "no mutation"
     if note is None:
@@ -154,7 +169,7 @@ def main(argv: list[str]) -> int:
         try:
             with zipfile.ZipFile(path) as z:
                 raw = z.read("word/document.xml")
-        except (zipfile.BadZipFile, KeyError, OSError) as exc:
+        except (zipfile.BadZipFile, KeyError, OSError, ValueError) as exc:
             unchecked.append(f"{os.path.basename(path)}: {exc}")
             print(f"\n{os.path.basename(path)}\n  UNREADABLE -- {exc}")
             continue

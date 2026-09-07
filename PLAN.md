@@ -27,14 +27,17 @@ state on 2026-09-07:
 - The primary checkout is on a **detached HEAD** (`a95733c`).
 - The Evidence Bundle v1 pilot is in progress.
 
-The largest single change this work requires — putting a sentinel character for math into
-the canonical paragraph text (§3, finding F1) — **changes the stored text of every
-math-bearing paragraph object, and therefore every content hash derived from it.** Landing
-that into a tree with seven parallel branches and a running pilot would force a
-ledger-identity migration across all of them simultaneously.
+At the time this was written, the change believed to be required — putting a sentinel into
+ArtifactCert's canonical paragraph text — would have rewritten the stored text of every
+math-bearing paragraph and every hash derived from it, across a repository with many live
+worktrees and a running pilot.
 
-Doing the pure, fixture-testable half of the work outside that tree first is the lower-risk
-sequence. The integration then lands as one reviewed change against a quiet tree.
+**That migration is withdrawn** (see §2, "The canonical-text contract"): F1 is retracted and
+`0992741` already edits prose safely around zero-width math. So the original justification for
+repo-first is gone, but the decision stands on a better one: the pure, fixture-testable half —
+math structure, protection digests, and later OMML mutation — has no dependency on
+ArtifactCert's identity model at all, and develops faster with its own tests. The integration
+then lands as one reviewed, additive change.
 
 ### Honest cost of this choice
 
@@ -151,7 +154,9 @@ before it is.
 
 ## 3. Findings from the ArtifactCert code that shape this design
 
-Verified against the tree at `a95733c` on 2026-09-07.
+Verified against ArtifactCert `origin/main` = `0992741` (2026-09-07), the commit pinned
+in `INTEGRATION_TARGET.txt`. Findings that were read off an earlier, diverged tree are
+marked RETRACTED rather than deleted.
 
 ### F1 — RETRACTED (was: math is zero-width so intersection is undecidable)
 
@@ -211,19 +216,19 @@ Also: `regression.py:_style_signature` walks only `child.tag == w:r`, so it has 
 awareness whatsoever — it cannot currently detect that a math subtree changed. The
 protected-span check is new code, not a re-use.
 
-### F4 — No new address space is needed for M1
+### F4 — ArtifactCert already owns math-object addressing (REVISED)
 
-The engine already targets sub-paragraph by **text match**: `docx_patch/spec.py` fills
-`DocxPatch.original_text` from the finding's `span`, and `_locate_span`
-(`engine.py:87`) finds it inside the paragraph's canonical text.
+**Revised 2026-09-07.** The earlier version said "no new address space is needed for M1;
+math-object addressing enters in Phase 2." The first half stands. The second was wrong:
+`0992741` already has first-class equation objects. `docx_manifest._paragraph_child_objects`
+emits `("docx_equation", f"{locator}#eq/{n}", None)`, and those objects are used in
+technical-review context, not as dead metadata.
 
-Introducing `body/p/37/math/0` style addresses would touch `_is_docx_locator`, `spec.py`'s
-binding, `docx_patch/authorization.py`, and `objects.locator` in the ledger — the sealed
-authority path that commit `18cdd1c` ("bind patch authority to exact proposal revision")
-specifically hardened.
+So Phase 2 must **not** invent an address space. It must bind to the existing one — and there
+is an enumeration mismatch to resolve first (F11).
 
-**Defer math-object addressing to Phase 2**, where a math object genuinely *is* the patch
-target. M1 needs only relative span offsets, which never leave the paragraph.
+For M1 this is irrelevant: verification is paragraph-local and needs no equation address.
+
 
 ### F5 — Tracked-change fixtures are unreachable behind a different guard
 
@@ -308,6 +313,48 @@ proposal in M1.
 
 Any Phase-2 OMML reader should start from these four cases.
 
+### F10 — Two coordinate systems, and they are not interchangeable
+
+MathPatch's sentinel stream and ArtifactCert's patch stream differ by the number of preceding
+sentinels:
+
+    mathpatch text     '\ufffcAB\ufffcCD'   span starts [0, 3]
+    _para_text (patch) 'ABCD'                math boundaries [0, 2]
+
+A math span is **one character wide** in the sentinel stream and **zero width** in the patch
+stream. So handing a consumer's `span_start`/`span_end` to a sentinel-space function silently
+mis-answers whenever math precedes the extent.
+
+Fixed additively in M0.1 rather than by redesign: `ProtectedMathSpan.patch_boundary` carries
+the zero-width position in `Projection.patch_text`, and `crosses_math_boundary(p, start, end)`
+applies ArtifactCert's own rule — `start < boundary < end`, strict on both sides — to consumer
+coordinates. `intersects_math` remains sentinel-space and says so. The integration entry point
+is `crosses_math_boundary`.
+
+### F11 — ArtifactCert counts 2 equation objects where MathPatch sees 1 span
+
+`_paragraph_child_objects` iterates `p.iter()` and emits a `docx_equation` for **every** element
+in `_MATH_TAGS`. MathPatch deliberately treats an outermost `m:oMathPara` as **one** span and
+does not descend into it. So a display equation shaped `m:oMathPara > m:oMath` becomes two
+ArtifactCert equation objects for one MathPatch span.
+
+Measured across the corpus:
+
+| | ArtifactCert `docx_equation` | MathPatch spans | mismatched paragraphs |
+|---|---|---|---|
+| Hygrochastic Revision v5 | 114 | 90 | 24 |
+| all six others | 1077 | 1077 | 0 |
+| **total** | **1191** | **1167** | **24** |
+
+Every mismatch is the `oMathPara` case, and the surplus is exactly Hygrochastic's 24 display
+equations.
+
+**M2 must open with this**, because the two enumerations must become a one-to-one binding
+before an equation can be addressed and mutated. Existing equation object ids should not be
+renumbered casually — live findings may already reference them — so the resolution is a
+binding decision, not a renumbering, and it must not introduce a third address scheme.
+
+
 ### Reading the ArtifactCert tree (discipline, learned the hard way)
 
 This plan's findings were wrong three times because they were read off the wrong tree: first a
@@ -341,8 +388,10 @@ Native OMML is universal in this corpus; the "edit rather than regenerate" premi
 No legacy MathType/OLE objects and no equation images anywhere. The OCR path stays
 correctly out of scope.
 
-**Note on interpreting these numbers:** "with math" is the *refusal* rate, not the
-*recoverable* rate. See F2 — recoverable is much smaller until holes exist.
+**Note on interpreting these numbers:** "with math" is the share of text-bearing
+paragraphs that CONTAIN math. It is **not** a refusal rate — at `0992741` a math-bearing
+paragraph is editable, and only an edit crossing a math boundary is refused (F1, retracted).
+Nor is it a recovery rate. See F2 for what is actually still refused.
 
 `tools/corpus_math_inventory.py` regenerates both tables and is the baseline for the M1
 recovery metric. Since the M0 audit it classifies shapes from `mathpatch.project`'s
@@ -488,6 +537,35 @@ Verification apparatus — both scripts were **failing open**:
 - `c14n_roundtrip_probe.py` skipped unreadable inputs and counted skipped scenarios as neither
   pass nor fail. Unreadable inputs are now fatal and skips are surfaced in the result.
 
+Coordinates and the protected-math oracle (from the second review pass):
+
+- **`patch_boundary` and `path` on every span** (F10, F11). A span is one character wide in the
+  sentinel stream and zero width in the consumer's stream; `crosses_math_boundary` applies
+  ArtifactCert's own strict rule to consumer coordinates, and `intersects_math` is documented as
+  sentinel-space only.
+- **`paragraph_fingerprint` = content AND placement.** A C14N digest cannot see an equation that
+  moved; the fingerprint adds patch-coordinate position and structural path, with a test that
+  fails without it.
+- **`CANONICAL_TEXT_CONTRACT_VERSION` bumped to 1.1.0**, as the projection's own rule requires:
+  nested-run text is now included, an authored sentinel is refused, and spans carry two new
+  coordinates.
+
+The pin (the reason all of this was necessary):
+
+- **`INTEGRATION_TARGET.txt`** names the ArtifactCert commit this milestone is verified against.
+  `verify_m0.sh` checks out exactly that revision into a temporary worktree and runs everything
+  against it; `make_evidence.py` refuses to write a record whose ArtifactCert HEAD differs, and
+  refuses to write one at all from a dirty MathPatch tree, a failing test run, or a corpus with
+  errors. The previous evidence record named `0992741` while the tree actually imported was
+  `a95733c` — honest about the divergence, but certifying nothing.
+- **Fixture determinism.** `ZipFile.writestr()` stamps the current time into every entry, so the
+  reproducibility check could never pass and CI was red for that reason. Fixed ZipInfo dates plus
+  `ZIP_STORED` remove the clock and the compressor from the output.
+- **CI is manual-only** and the matrix now covers the declared 3.10 floor;
+  `tools/test_local.sh` runs the same steps with no Actions minutes.
+- **`c14n_roundtrip_probe.py` uses the hardened parser**, matching the production path rather
+  than parsing more permissively than the code it certifies.
+
 Record and distribution:
 
 - `M0_EVIDENCE.json` (`tools/make_evidence.py`) binds the claims to the MathPatch commit,
@@ -522,11 +600,24 @@ proposed changing ArtifactCert's canonical text first.
    it lets ArtifactCert's analyzer and writer consume one authoritative model, and it retires
    F6 and F8 as a side effect instead of adding a third stream.
 
-2. **Add protected-span verification to the existing patch path.** ArtifactCert calls MathPatch
-   to inventory math spans in the already-located paragraph, digests them before and after an
-   ordinary patch, and requires equality. This closes the count-vs-content gap of section 1(1)
-   and makes `safety.py`'s "the regression report still proves that its XML stayed put" true.
-   It changes no coordinate space and no stored identity.
+2. **Add protected-span verification to the existing patch path — fingerprint, not just
+   digest.** ArtifactCert calls MathPatch to inventory math spans in the already-located
+   paragraph before and after an ordinary patch, and requires `paragraph_fingerprint` equality:
+   same span **count, order, content digest, patch-coordinate position, and structural path**.
+
+   A digest alone is insufficient, and demonstrably so. C14N is a *content* oracle — exclusive
+   canonicalization is deliberately insensitive to surrounding namespace context — so it cannot
+   see a move:
+
+       before:  A [eq] B          after:  A B [eq]
+
+   Patch text is `"AB"` both times (math is zero width), the span count, the ordinal and the
+   C14N digest are all identical, and the equation has moved
+   (`tests/test_digest.py::test_moved_equation_defeats_digest_only`). Adding `patch_boundary`
+   and `path` closes it.
+
+   With that, `safety.py`'s "the regression report still proves that its XML stayed put" becomes
+   true. It changes no coordinate space and no stored identity.
 
 3. **Collapse the remaining duplicate run/offset computations** so MathPatch and ArtifactCert
    cannot drift (F6).

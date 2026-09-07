@@ -23,11 +23,12 @@ Consequences of following `_para_text` exactly, both deliberate:
   - A math span inside such a wrapper still gets a sentinel, even though the wrapper
     contributes no text. An unpositioned span cannot be protected (PLAN.md F1/F5).
 
-See PLAN.md F7: `safety.analyze_paragraph` advances its own offset by a hyperlink's
-text width while `_para_text` omits that text, so the two spaces are skewed for such
-paragraphs. That skew is a live mis-target in ArtifactCert and must be resolved in
-favour of this projection, not against it -- otherwise the sentinel inherits the same
-class of bug the moment math offsets start being consumed.
+PLAN.md F7 (RETRACTED) records a past version of ArtifactCert that advanced its offset
+by a hyperlink's text width while `_para_text` omitted that text, skewing the two
+spaces. That was fixed on 2026-08-24, before this project existed; at the pinned commit
+both use canonical coordinates. The lesson it leaves is the reason `patch_boundary`
+exists here: a consumer's offsets and this projection's offsets are different
+coordinate systems, and they must be converted explicitly rather than assumed equal.
 """
 
 from __future__ import annotations
@@ -44,10 +45,12 @@ from .spans import (
     qn,
 )
 
+#: 1.1.0 (2026-09-07, M0.1): nested-run text is now included, an authored sentinel is
+#: refused, and spans carry `patch_boundary` and `path`. 1.0.0 was the M0 projection.
 #: Bump on ANY change to the projection. A consumer whose stored artifact identity
 #: derives from canonical text must record this value and refuse a mismatch rather
 #: than warn: a silent change to the projection is a silent change to that identity.
-CANONICAL_TEXT_CONTRACT_VERSION = "1.0.0"
+CANONICAL_TEXT_CONTRACT_VERSION = "1.1.0"
 
 
 class SentinelCollision(ValueError):
@@ -69,8 +72,22 @@ class Projection:
     spans: tuple[ProtectedMathSpan, ...]
     anomalies: tuple[str, ...] = ()
 
+    @property
+    def patch_text(self) -> str:
+        """The consumer's edit coordinate stream: `text` without sentinels.
+
+        Equal to ArtifactCert's `docx_manifest._para_text` on every paragraph of the
+        reference corpus (`tools/drift_gate.py`). Edit extents supplied by a consumer
+        index THIS string, never `text`.
+        """
+        return self.text.replace(SENTINEL, "")
+
     def sentinel_offsets(self) -> tuple[int, ...]:
         return tuple(i for i, ch in enumerate(self.text) if ch == SENTINEL)
+
+    def math_boundaries(self) -> tuple[int, ...]:
+        """Zero-width math positions in `patch_text`, in document order."""
+        return tuple(s.patch_boundary for s in self.spans)
 
 
 def project(p: etree._Element) -> Projection:
@@ -91,10 +108,11 @@ def project(p: etree._Element) -> Projection:
     parts: list[str] = []
     spans: list[ProtectedMathSpan] = []
     anomalies: list[str] = []
-    offset = 0
+    offset = 0        # sentinel-stream offset
+    patch_offset = 0  # consumer/_para_text offset; sentinels do NOT advance it
     ordinal = 0
 
-    def emit_span(el: etree._Element, wrapper: str | None) -> None:
+    def emit_span(el: etree._Element, wrapper: str | None, path: tuple[int, ...]) -> None:
         nonlocal offset, ordinal
         spans.append(
             ProtectedMathSpan(
@@ -104,6 +122,8 @@ def project(p: etree._Element) -> Projection:
                 kind=local_name(el),
                 ordinal=ordinal,
                 wrapper=wrapper,
+                patch_boundary=patch_offset,
+                path=path,
             )
         )
         parts.append(SENTINEL)
@@ -111,7 +131,7 @@ def project(p: etree._Element) -> Projection:
         ordinal += 1
 
     def emit_text(text: str) -> None:
-        nonlocal offset
+        nonlocal offset, patch_offset
         if not text:
             return
         if SENTINEL in text:
@@ -122,9 +142,16 @@ def project(p: etree._Element) -> Projection:
             )
         parts.append(text)
         offset += len(text)
+        patch_offset += len(text)
 
-    def walk(el: etree._Element, wrapper: str | None, in_direct_run: bool) -> None:
-        for child in el:
+    def walk(
+        el: etree._Element,
+        wrapper: str | None,
+        in_direct_run: bool,
+        path: tuple[int, ...] = (),
+    ) -> None:
+        for index, child in enumerate(el):
+            child_path = path + (index,)
             tag = child.tag
             if not isinstance(tag, str):
                 # Comment or processing instruction. lxml gives these a callable
@@ -134,7 +161,7 @@ def project(p: etree._Element) -> Projection:
                 continue
             if tag in MATH_TAGS:
                 # Outermost-only: never descend into a match.
-                emit_span(child, wrapper)
+                emit_span(child, wrapper, child_path)
             elif tag == qn("r"):
                 # `_para_text` reaches every w:t descendant of a DIRECT w:r child,
                 # so a run nested inside a direct run still contributes text. Word
@@ -146,14 +173,24 @@ def project(p: etree._Element) -> Projection:
                 if nested and "nested_run" not in anomalies:
                     anomalies.append("nested_run")
                 direct = (el is p) or in_direct_run
-                walk(child, wrapper if wrapper is not None else ("r" if direct else None), direct)
+                walk(
+                    child,
+                    wrapper if wrapper is not None else ("r" if direct else None),
+                    direct,
+                    child_path,
+                )
             elif tag == qn("t"):
                 if in_direct_run:
                     emit_text(child.text or "")
             else:
                 # Contributes no canonical text of its own (matching _para_text), but
                 # may contain math, or a nested w:t belonging to an enclosing run.
-                walk(child, wrapper if wrapper is not None else local_name(child), in_direct_run)
+                walk(
+                    child,
+                    wrapper if wrapper is not None else local_name(child),
+                    in_direct_run,
+                    child_path,
+                )
 
     walk(p, None, False)
     return Projection(
@@ -171,12 +208,39 @@ def math_spans(p: etree._Element) -> tuple[ProtectedMathSpan, ...]:
     return project(p).spans
 
 
-def intersects_math(p: etree._Element, start: int, end: int) -> tuple[ProtectedMathSpan, ...]:
-    """Math spans strictly inside the half-open edit extent `[start, end)`.
+def crosses_math_boundary(
+    p: etree._Element, patch_start: int, patch_end: int
+) -> tuple[ProtectedMathSpan, ...]:
+    """Math boundaries strictly inside the edit extent, in PATCH coordinates.
 
-    A span that merely abuts the extent (`span.start == end`, or `span.end == start`)
-    does NOT intersect: an edit may end exactly where math begins. This is the test
-    the blanket `PATCH_NOT_SAFE_MATH_IN_TARGET` refusal should be narrowed to.
+    This is the integration entry point. It mirrors ArtifactCert's own rule at
+    `0992741` exactly -- `safety.py`: `if span_start < offset < span_end` -- so an
+    edit may begin or end precisely at a boundary, and only an edit that spans one
+    is reported. Extents index `Projection.patch_text` (= `_para_text`), which is
+    the space a consumer's `span_start`/`span_end` already live in.
+
+    Use this, not `intersects_math`, when the caller's offsets come from a consumer.
+    """
+    proj = project(p)
+    limit = len(proj.patch_text)
+    if not (0 <= patch_start <= patch_end <= limit):
+        raise ValueError(
+            f"edit extent [{patch_start}, {patch_end}) is not a valid range within "
+            f"patch text of length {limit}"
+        )
+    return tuple(s for s in proj.spans if patch_start < s.patch_boundary < patch_end)
+
+
+def intersects_math(p: etree._Element, start: int, end: int) -> tuple[ProtectedMathSpan, ...]:
+    """Math spans intersecting `[start, end)` in SENTINEL coordinates.
+
+    Offsets index `Projection.text`, NOT `patch_text`. The two differ by the number
+    of preceding sentinels, so a consumer's edit extents must go to
+    `crosses_math_boundary` instead -- passing them here silently mis-answers
+    whenever math precedes the extent (PLAN.md F10).
+
+    A span that merely abuts the extent does not intersect: an edit may end exactly
+    where math begins.
     """
     proj = project(p)
     if not (0 <= start <= end <= len(proj.text)):

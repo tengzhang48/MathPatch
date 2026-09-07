@@ -1,19 +1,20 @@
 #!/usr/bin/env python3
 """M0 completion gate: prove the projection is a STRICT EXTENSION of _para_text.
 
-MathPatch's canonical text is intended to replace ArtifactCert's
-`docx_manifest._para_text` so that exactly one definition of canonical paragraph text
-exists (PLAN.md section 2). That is only safe if the replacement is provably a strict
-extension of what it replaces:
+MathPatch's `patch_text` must equal ArtifactCert's `docx_manifest._para_text` exactly,
+because that is the coordinate system a consumer's edit extents live in. (Replacing
+`_para_text` outright is NOT the plan -- that migration is withdrawn, see PLAN.md
+section 2 -- but the projection is useless at the seam unless it agrees with it.)
+The property proved here:
 
   math-free paragraph -> byte-identical to _para_text
   math paragraph      -> identical to _para_text once sentinels are removed,
                          with one sentinel per discovered span, each span offset
                          landing on a sentinel
 
-Any failure means the projection would silently change ArtifactCert's stored object
-text -- and therefore its candidate identity -- beyond the sentinels it is allowed to
-add. Exit code is nonzero on any failure.
+Any failure means the projection and the consumer disagree about which characters an
+edit extent covers -- so every protected-span offset handed across the seam would be
+wrong. Exit code is nonzero on any failure.
 
 This tool deliberately REUSES ArtifactCert's own `enumerate_paragraphs` (so the two
 never disagree about which paragraphs exist) and its hardened

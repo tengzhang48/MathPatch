@@ -1,0 +1,14 @@
+0992741068cd3f0806d3ff63958a43a84a38bd32
+# ArtifactCert commit this milestone is verified against.
+#
+# Every claim in PLAN.md about what ArtifactCert "currently" does refers to THIS
+# commit. tools/verify_m0.sh checks out exactly this revision and refuses to run
+# against anything else, and tools/make_evidence.py refuses to write a record whose
+# ArtifactCert HEAD does not equal it.
+#
+# The reason is concrete: findings in this repository were wrong three times because
+# they were read off a diverged tree (a detached HEAD 195 commits behind, then a
+# local `main` 15 commits stale). A pin plus a fetch is the fix.
+#
+# To advance the target: fetch, read the new tree, re-derive the findings in PLAN.md
+# section 3, then update this hash in the same commit.

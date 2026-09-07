@@ -32,6 +32,15 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 
+def expected_artifactcert_commit() -> str:
+    """The pinned integration target, from INTEGRATION_TARGET.txt."""
+    for line in (ROOT / "INTEGRATION_TARGET.txt").read_text().splitlines():
+        line = line.strip()
+        if line and not line.startswith("#"):
+            return line
+    raise SystemExit("INTEGRATION_TARGET.txt contains no commit hash")
+
+
 def sh(*args: str, cwd: Path | None = None) -> str | None:
     try:
         out = subprocess.run(
@@ -60,6 +69,32 @@ def main(argv: list[str]) -> int:
     if not (Path(ac_src) / "artifactcert" / "docx_manifest.py").is_file():
         print(f"ARTIFACTCERT_SRC not usable: {ac_src}", file=sys.stderr)
         return 2
+
+    # FAIL CLOSED on the pin. An evidence record that names one commit while the
+    # code under test came from another certifies nothing -- that is precisely the
+    # wrong-tree failure this record exists to prevent.
+    expected = expected_artifactcert_commit()
+    actual = sh("git", "rev-parse", "HEAD", cwd=Path(ac_src).parent)
+    if actual != expected:
+        print(
+            f"REFUSED: ArtifactCert at {ac_src} is {actual}, not the pinned "
+            f"{expected}.\n"
+            f"  Create a pinned tree:  git -C <artifactcert> worktree add --detach "
+            f"<dir> {expected}\n"
+            f"  or run tools/verify_m0.sh, which does that for you.",
+            file=sys.stderr,
+        )
+        return 3
+
+    # A record generated from an uncommitted tree cannot be re-derived.
+    if sh("git", "status", "--porcelain", cwd=ROOT):
+        print(
+            "REFUSED: the MathPatch tree is dirty. Commit the implementation first, "
+            "then generate the evidence record, then commit the record.",
+            file=sys.stderr,
+        )
+        return 4
+
     sys.path.insert(0, ac_src)
 
     from lxml import etree
@@ -71,6 +106,7 @@ def main(argv: list[str]) -> int:
     W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
     corpus = []
+    corpus_errors: list[str] = []
     for i, path in enumerate(sorted(glob.glob(os.path.join(ac_dir, "*.docx"))), start=1):
         try:
             with zipfile.ZipFile(path) as z:
@@ -78,9 +114,15 @@ def main(argv: list[str]) -> int:
             root = parse_untrusted_xml(raw, part_name="word/document.xml")
         except Exception as exc:  # recorded, never silently dropped
             corpus.append({"alias": f"doc-{i:02d}", "error": str(exc)})
+            corpus_errors.append(f"doc-{i:02d}: {exc}")
             continue
         body = root.find(f"{W}body")
+        if body is None:
+            corpus.append({"alias": f"doc-{i:02d}", "error": "no w:body"})
+            corpus_errors.append(f"doc-{i:02d}: no w:body")
+            continue
         paras = math_paras = spans = anomalies = 0
+        disagreements = 0
         for _loc, p in enumerate_paragraphs(body):
             proj = project(p)
             paras += 1
@@ -90,9 +132,13 @@ def main(argv: list[str]) -> int:
             if proj.anomalies:
                 anomalies += 1
             if ("math" in paragraph_flags(p)) != bool(proj.spans):
-                corpus.append({"alias": f"doc-{i:02d}", "error": "detection disagreement"})
-                break
+                disagreements += 1
+        if disagreements:
+            corpus_errors.append(
+                f"doc-{i:02d}: {disagreements} detection disagreement(s) vs paragraph_flags"
+            )
         corpus.append({
+            "detection_disagreements": disagreements,
             "alias": f"doc-{i:02d}",
             "sha256": file_sha256(path),
             "bytes": os.path.getsize(path),
@@ -109,13 +155,14 @@ def main(argv: list[str]) -> int:
         "mathpatch": {
             "version": __version__,
             "commit": sh("git", "rev-parse", "HEAD", cwd=ROOT),
-            "dirty": bool(sh("git", "status", "--porcelain", cwd=ROOT)),
+            "dirty": False,  # refused above if dirty
             "canonical_text_contract_version": CANONICAL_TEXT_CONTRACT_VERSION,
             "c14n_kwargs": C14N_KWARGS,
         },
         "artifactcert": {
             "src": ac_src,
-            "commit": sh("git", "rev-parse", "HEAD", cwd=Path(ac_src).parent),
+            "pinned_target": expected,
+            "commit": actual,
             "origin_main": sh("git", "rev-parse", "origin/main", cwd=Path(ac_src).parent),
             "origin_main_date": sh(
                 "git", "log", "-1", "--format=%cI", "origin/main", cwd=Path(ac_src).parent
@@ -141,12 +188,23 @@ def main(argv: list[str]) -> int:
         },
     }
 
+    unit_ok = record["checks"]["unit_tests"]
+    if corpus_errors or not unit_ok:
+        print("REFUSED: not writing an evidence record for a failing run.",
+              file=sys.stderr)
+        for e in corpus_errors:
+            print(f"  corpus: {e}", file=sys.stderr)
+        if not unit_ok:
+            print("  unit tests: FAILED", file=sys.stderr)
+        return 1
+
     out_path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
     print(f"wrote {out_path}")
     print(f"  artifactcert origin/main = {record['artifactcert']['origin_main']}"
           f" ({record['artifactcert']['origin_main_date']})")
     print(f"  corpus documents = {len(corpus)}")
     print(f"  unit tests pass  = {record['checks']['unit_tests']}")
+    print(f"  pinned target certified = {expected}")
     return 0
 
 

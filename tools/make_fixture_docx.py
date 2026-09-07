@@ -82,10 +82,21 @@ def main(argv: list[str]) -> int:
         Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "descent.docx"
     )
     out.parent.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
-        z.writestr("[Content_Types].xml", CONTENT_TYPES)
-        z.writestr("_rels/.rels", RELS)
-        z.writestr("word/document.xml", document())
+    # Byte-for-byte reproducible: ZipFile.writestr() stamps the CURRENT time into
+    # each entry, so regenerating produced a different file every run and the
+    # reproducibility check could never pass. Fixed ZipInfo dates plus ZIP_STORED
+    # remove both the clock and the compressor from the output.
+    fixed_date = (1980, 1, 1, 0, 0, 0)
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_STORED) as z:
+        for name, payload in (
+            ("[Content_Types].xml", CONTENT_TYPES),
+            ("_rels/.rels", RELS),
+            ("word/document.xml", document()),
+        ):
+            info = zipfile.ZipInfo(name, date_time=fixed_date)
+            info.compress_type = zipfile.ZIP_STORED
+            info.external_attr = 0o644 << 16
+            z.writestr(info, payload)
     print(f"wrote {out}")
     return 0
 

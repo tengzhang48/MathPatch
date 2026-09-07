@@ -10,19 +10,22 @@ it is the standing reminder of why this project fetches and quotes a commit hash
 claiming what ArtifactCert "currently" does (see PLAN.md, "Reading the ArtifactCert
 tree").
 
-The two coordinate spaces:
+The defect, as it existed BEFORE the 2026-08-24 fix:
 
   docx_manifest._para_text      concatenates DIRECT w:r children only.
                                 Hyperlink text contributes NOTHING.
-  safety.analyze_paragraph      re-walks the paragraph and, for w:hyperlink/w:smartTag,
-                                advances its offset BY that element's text width.
+  safety.analyze_paragraph      re-walked the paragraph and, for w:hyperlink/w:smartTag,
+                                advanced its offset BY that element's text width.
+
+  At the pinned commit safety.analyze_paragraph computes those boundaries in canonical
+  coordinates instead, so neither outcome below should occur.
 
 engine.apply_patches locates the anchor in the FIRST space
 (`text = paragraph_text(p); span_start = text.index(anchor)`) and then hands those
 offsets to the SECOND. For a paragraph with a text-carrying hyperlink followed by
 editable text, every fragment offset after the hyperlink is shifted by its width.
 
-Two observable outcomes, both wrong:
+The two observable outcomes it produced, either of which reappearing is a regression:
 
   A. the shifted hyperlink interval still overlaps the edit span -> FALSE REFUSAL
   B. the shift moves it clear of the edit span -> NO refusal, and the patch

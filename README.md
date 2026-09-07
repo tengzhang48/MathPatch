@@ -47,6 +47,43 @@ It is designed to be integrated into
 [ArtifactCert](https://github.com/tengzhang48/ArtifactCert) as its math capability, while
 remaining usable on its own.
 
+## Testing it
+
+**Library only — needs nothing but this repository.** No manuscripts, no ArtifactCert, no CI
+minutes. Builds a throwaway virtualenv, installs, runs the suite, and checks the synthetic
+fixture is byte-reproducible:
+
+```
+tools/test_local.sh
+```
+
+Or by hand:
+
+```
+python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
+.venv/bin/python -m pytest -q
+```
+
+**Full verification — needs the ArtifactCert repository and a manuscript corpus.** This checks
+out ArtifactCert at the commit pinned in `INTEGRATION_TARGET.txt` (into a temporary worktree it
+removes afterwards) and runs the drift gate, the C14N probe, the F7 regression probe, the corpus
+inventory, and the evidence record against exactly that revision:
+
+```
+ARTIFACTCERT_REPO=/path/to/ArtifactCert \
+ARTIFACTCERT_DIR=/path/to/manuscripts \
+tools/verify_m0.sh
+```
+
+Every step is fatal — the scripts previously printed `GATE: PASSED` while skipping an unreadable
+input, and that is fixed. The drift gate needs an importable ArtifactCert because it compares
+against that project's own `_para_text`; copying that function here would be the drift the gate
+exists to detect.
+
+**CI is `workflow_dispatch` only**, deliberately: this account's Actions allowance is exhausted,
+and an auto-trigger would show a red badge meaning "no minutes" rather than "broken code".
+`tools/test_local.sh` runs the same steps.
+
 ## Status and evidence
 
 See **[PLAN.md](PLAN.md)** for the design, the milestones, and the findings — from real

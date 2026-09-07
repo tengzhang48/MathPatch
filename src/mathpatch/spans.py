@@ -45,10 +45,23 @@ def local_name(el: etree._Element) -> str:
 class ProtectedMathSpan:
     """One outermost math element, positioned in its paragraph's canonical text.
 
-    `start`/`end` are offsets into `canonical_text(p)` for the SAME paragraph `p`,
-    and always satisfy `end == start + 1` because a span contributes exactly one
-    sentinel character. They are relative to the paragraph and carry no document
-    address: MathPatch never owns addressing (see PLAN.md section 2).
+    Two coordinate systems, deliberately separate (PLAN.md F10):
+
+    - `start`/`end` index `Projection.text`, the SENTINEL stream, and always satisfy
+      `end == start + 1` because a span contributes exactly one sentinel character.
+    - `patch_boundary` is the span's ZERO-WIDTH position in `Projection.patch_text`,
+      which equals ArtifactCert's `_para_text`. This is the coordinate system a
+      consumer's edit extents live in, and the one its refusal rule uses
+      (`span_start < boundary < span_end`). The two differ by the number of
+      preceding sentinels, so they are NOT interchangeable.
+
+    `path` is the element's index path within the paragraph (e.g. `(2, 1)` for the
+    second child of the paragraph's third child). It makes PLACEMENT comparable: a
+    C14N digest proves an equation's contents are unchanged but not that it stayed
+    where it was.
+
+    All coordinates are relative to the paragraph and carry no document address:
+    MathPatch never owns addressing (see PLAN.md section 2).
     """
 
     element: etree._Element
@@ -57,6 +70,8 @@ class ProtectedMathSpan:
     kind: str
     ordinal: int
     wrapper: str | None = None
+    patch_boundary: int = -1
+    path: tuple[int, ...] = ()
 
     @property
     def is_display(self) -> bool:

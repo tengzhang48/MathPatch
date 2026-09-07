@@ -52,3 +52,40 @@ def span_digest(span: ProtectedMathSpan | etree._Element) -> str:
 def span_digests(spans: tuple[ProtectedMathSpan, ...] | list[ProtectedMathSpan]) -> tuple[str, ...]:
     """Ordered digests, for comparing a whole paragraph's protected regions."""
     return tuple(span_digest(s) for s in spans)
+
+
+def span_fingerprint(span: ProtectedMathSpan) -> tuple[str, int, int, tuple[int, ...], str]:
+    """Content AND placement: `(kind, ordinal, patch_boundary, path, digest)`.
+
+    A C14N digest is a CONTENT oracle, not a LOCATION one -- deliberately, since
+    exclusive canonicalization is insensitive to surrounding namespace context. So
+    digest equality alone does not prove an equation "stayed put":
+
+        before:  A [eq] B          after:  A B [eq]
+
+    Both have patch text "AB" (math is zero width), the same span count, the same
+    ordinal, and the same digest. The equation moved and every content check passes
+    (demonstrated in `tests/test_digest.py::test_moved_equation_defeats_digest_only`).
+
+    Adding `patch_boundary` and `path` makes placement comparable, so
+    `paragraph_fingerprint` equality means: same equations, same contents, same
+    positions in the edit coordinate stream, same structural location.
+    """
+    return (
+        span.kind,
+        span.ordinal,
+        span.patch_boundary,
+        span.path,
+        span_digest(span),
+    )
+
+
+def paragraph_fingerprint(
+    spans: tuple[ProtectedMathSpan, ...] | list[ProtectedMathSpan],
+) -> tuple[tuple[str, int, int, tuple[int, ...], str], ...]:
+    """The protected-math oracle: compare this before and after a patch.
+
+    Equality proves span count, order, content, patch-coordinate position, and
+    structural placement all held. Inequality names which of those changed.
+    """
+    return tuple(span_fingerprint(s) for s in spans)

@@ -13,8 +13,10 @@ Two tables, both baselines for MathPatch milestones (see PLAN.md):
                                edits with holes (PLAN.md finding F2); it is NOT
                                recoverable by a single contiguous non-intersecting span.
 
-The "with math" percentage in Table 1 is the REFUSAL rate under
-artifactcert/docx_patch/safety.py:210. It is not the recoverable rate. Table 2 is.
+The "with math" percentage in Table 1 is simply the share of text-bearing paragraphs
+that CONTAIN math. It is NOT a refusal rate: at the pinned ArtifactCert commit a
+math-bearing paragraph is editable, and only an edit crossing a math boundary is
+refused. It is not a recovery rate either -- Table 2 addresses that.
 
 Coordinate note: shapes are classified from mathpatch.project()'s canonical text, the
 same projection the library ships and the drift gate certifies as a strict extension of
@@ -164,7 +166,7 @@ def main(argv: list[str]) -> int:
     legacy = sum(r["ole"] + r["mathtype"] + r["eq3"] for r in recs)
     print(f"\n  legacy (OLE/MathType/Equation.3) objects across corpus: {legacy}"
           f"  -> {'NATIVE OMML premise holds' if legacy == 0 else 'PREMISE BROKEN: see PLAN.md non-goals'}")
-    print("  'w/math' is the REFUSAL rate (safety.py:210), not the recoverable rate.")
+    print("  'w/math' = share of text-bearing paragraphs containing math. NOT a refusal rate.")
 
     print("\nTable 2 - shape of math paragraphs (what can actually be recovered)")
     print(f"{'manuscript':44s} {'math paras':>11s} {'both sides':>11s} {'before':>7s}"

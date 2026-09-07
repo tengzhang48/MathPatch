@@ -14,11 +14,20 @@ from .canonical import (
     Projection,
     SentinelCollision,
     canonical_text,
+    crosses_math_boundary,
     intersects_math,
     math_spans,
     project,
 )
-from .digest import C14N_KWARGS, c14n_bytes, digest, span_digest, span_digests
+from .digest import (
+    C14N_KWARGS,
+    c14n_bytes,
+    digest,
+    paragraph_fingerprint,
+    span_digest,
+    span_digests,
+    span_fingerprint,
+)
 from .spans import (
     MATH_TAGS,
     OMATH,
@@ -49,13 +58,16 @@ __all__ = [
     "__version__",
     "c14n_bytes",
     "canonical_text",
+    "crosses_math_boundary",
     "digest",
     "has_math",
     "intersects_math",
     "math_spans",
     "outermost_math",
+    "paragraph_fingerprint",
     "project",
     "qn",
     "span_digest",
     "span_digests",
+    "span_fingerprint",
 ]

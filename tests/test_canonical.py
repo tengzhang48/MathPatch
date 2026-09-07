@@ -9,6 +9,7 @@ from mathpatch import (
     CANONICAL_TEXT_CONTRACT_VERSION,
     SENTINEL,
     canonical_text,
+    crosses_math_boundary,
     intersects_math,
     math_spans,
     project,
@@ -95,7 +96,8 @@ def test_text_and_offsets_cannot_disagree():
 
 
 class TestIntersection:
-    """The test the blanket math refusal should be narrowed to."""
+    """Sentinel-coordinate intersection. NOTE: a consumer's offsets belong in
+    crosses_math_boundary, not here -- see TestPatchCoordinates."""
 
     def setup_method(self):
         # canonical: "aaa" + SENTINEL + "bbb"  -> sentinel at offset 3
@@ -248,3 +250,61 @@ class TestHardening:
         text = canonical_text(p)
         assert len(intersects_math(p, 0, len(text))) == 1
         assert intersects_math(p, 0, 0) == ()
+
+
+class TestPatchCoordinates:
+    """Two coordinate systems, never interchangeable. PLAN.md F10."""
+
+    def test_patch_text_equals_text_without_sentinels(self):
+        p = para(omath() + run("AB") + omath() + run("CD"))
+        proj = project(p)
+        assert proj.text == f"{SENTINEL}AB{SENTINEL}CD"
+        assert proj.patch_text == "ABCD"
+
+    def test_sentinel_starts_differ_from_patch_boundaries(self):
+        """The landmine: handing a consumer's offsets to intersects_math would
+        mis-answer whenever math precedes the extent."""
+        p = para(omath() + run("AB") + omath() + run("CD"))
+        proj = project(p)
+        assert [s.start for s in proj.spans] == [0, 3]
+        assert proj.math_boundaries() == (0, 2)
+        assert [s.start for s in proj.spans] != list(proj.math_boundaries())
+
+    def test_patch_boundary_is_zero_width(self):
+        p = para(run("aaa") + omath() + run("bbb"))
+        (span,) = math_spans(p)
+        assert span.patch_boundary == 3
+        assert project(p).patch_text == "aaabbb"
+
+    def test_structural_path_is_recorded(self):
+        p = para(run("a") + omath() + f"<w:ins>{omath()}</w:ins>")
+        direct, nested = math_spans(p)
+        assert direct.path == (1,)
+        assert nested.path == (2, 0)
+
+    class TestCrossingRule:
+        """crosses_math_boundary mirrors ArtifactCert 0992741's own rule:
+        `if span_start < offset < span_end` -- strict on both sides."""
+
+        def setup_method(self):
+            # patch_text "aaabbb", one math boundary at 3
+            self.p = para(run("aaa") + omath() + run("bbb"))
+
+        def test_edit_ending_at_the_boundary_is_allowed(self):
+            assert crosses_math_boundary(self.p, 0, 3) == ()
+
+        def test_edit_starting_at_the_boundary_is_allowed(self):
+            assert crosses_math_boundary(self.p, 3, 6) == ()
+
+        def test_edit_spanning_the_boundary_is_reported(self):
+            assert len(crosses_math_boundary(self.p, 2, 4)) == 1
+
+        def test_whole_paragraph_replacement_is_reported(self):
+            assert len(crosses_math_boundary(self.p, 0, 6)) == 1
+
+        def test_extent_validated_against_patch_text_not_sentinel_text(self):
+            # patch_text is 6 chars; sentinel text is 7. 7 must be rejected.
+            assert len(project(self.p).text) == 7
+            crosses_math_boundary(self.p, 0, 6)
+            with pytest.raises(ValueError):
+                crosses_math_boundary(self.p, 0, 7)

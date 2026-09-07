@@ -4,10 +4,12 @@ name: tests
 # manuscript corpus and an importable ArtifactCert, neither of which belongs in
 # CI -- run tools/verify_m0.sh locally for those. CI therefore proves the library
 # is internally consistent, not that M0's corpus claims hold.
+# MANUAL ONLY. Push/PR triggers are deliberately absent: this account's Actions
+# allowance is exhausted, so an auto-trigger would queue runs that cannot complete
+# and would report a red badge that means "no minutes", not "broken code".
+# `tools/test_local.sh` runs exactly these steps locally and is the real gate.
+# Re-enable push/pull_request when minutes are available again.
 on:
-  push:
-    branches: [main]
-  pull_request:
   workflow_dispatch:
 
 jobs:
@@ -16,7 +18,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12", "3.13"]
+        python-version: ["3.10", "3.11", "3.12", "3.13"]  # matches requires-python
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
