@@ -589,16 +589,34 @@ proposed changing ArtifactCert's canonical text first.
    duplicate-coordinate problem of F6, reintroduced at the seam. Target shape:
 
    ```
-   Projection
-     ├─ text                     (patch-coordinate stream, = _para_text)
-     ├─ review_text              (reviewer stream, incl. mapped symbols — F8)
-     ├─ text_segments[]          element, start, end
-     └─ protected_spans[]        element, start, end, kind, digest
+   ParagraphProjection
+     ├─ patch_text               "AB"          (= _para_text, the edit coordinate stream)
+     ├─ segments[]               kind, source element, [start, end)
+     │                             kind ∈ {text, math_boundary, opaque}
+     └─ protected_spans[]        element, patch_boundary, ordinal, kind, path, digest
    ```
 
-   One traversal, several projections. This is the single most valuable piece of the milestone:
-   it lets ArtifactCert's analyzer and writer consume one authoritative model, and it retires
-   F6 and F8 as a side effect instead of adding a third stream.
+   One structural traversal, from which a consumer selects its own projections. This is the
+   single most valuable piece of the milestone: ArtifactCert's analyzer and writer consume one
+   authoritative model instead of rebuilding offsets, which retires F6.
+
+   **MathPatch should NOT own `review_text`** — a point worth stating because an earlier sketch
+   of this milestone had it. ArtifactCert's reviewer stream additionally decodes legacy `w:sym`
+   glyphs through a carefully bounded Adobe Symbol mapping that refuses unknown fonts because
+   "guessing them would silently change scientific content" (F8). That is substantial non-math
+   Word semantics and a policy decision about scientific fidelity. Absorbing it to produce a
+   convenient `review_text` would turn MathPatch into a generic Word paragraph canonicalizer and
+   blur the boundary the whole package is organised around. The division:
+
+   ```
+   MathPatch      the structural segment map: w:t segments, math boundaries,
+                  opaque segments, and the source element behind each
+   ArtifactCert   patch_text  = select the w:t segments
+                  review_text = w:t segments + its existing w:sym decoder
+   ```
+
+   That still gives one traversal, so F6 cannot recur, without moving symbol policy across the
+   boundary.
 
 2. **Add protected-span verification to the existing patch path — fingerprint, not just
    digest.** ArtifactCert calls MathPatch to inventory math spans in the already-located
