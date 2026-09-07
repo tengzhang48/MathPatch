@@ -40,7 +40,9 @@ as its math capability, while remaining usable on its own.
 
 ## Status
 
-Pre-implementation. See **[PLAN.md](PLAN.md)** for the design, the milestones, and the
+M0 complete — the canonical projection, span discovery, and C14N digests are implemented and
+gated against a real corpus (3,598 paragraphs, 851 math spans, zero drift). See
+**[PLAN.md](PLAN.md)** for the design, the milestones, and the
 findings from real manuscripts and real integration code that shape them.
 
 Measure a corpus before trusting any recovery estimate:

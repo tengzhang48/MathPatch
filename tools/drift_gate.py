@@ -1,0 +1,157 @@
+#!/usr/bin/env python3
+"""M0 completion gate: prove the projection is a STRICT EXTENSION of _para_text.
+
+MathPatch's canonical text is intended to replace ArtifactCert's
+`docx_manifest._para_text` so that exactly one definition of canonical paragraph text
+exists (PLAN.md section 2). That is only safe if the replacement is provably a strict
+extension of what it replaces:
+
+  math-free paragraph -> byte-identical to _para_text
+  math paragraph      -> identical to _para_text once sentinels are removed,
+                         with one sentinel per discovered span, each span offset
+                         landing on a sentinel
+
+Any failure means the projection would silently change ArtifactCert's stored object
+text -- and therefore its candidate identity -- beyond the sentinels it is allowed to
+add. Exit code is nonzero on any failure.
+
+This tool deliberately REUSES ArtifactCert's own `enumerate_paragraphs` (so the two
+never disagree about which paragraphs exist) and its hardened
+`opc_xml.parse_untrusted_xml` (which refuses DOCTYPEs and entity references, because
+entity expansion would make canonical evidence differ from the package bytes).
+
+Usage:
+    ARTIFACTCERT_SRC=/path/to/ArtifactCert/src drift_gate.py file.docx [...]
+    drift_gate.py --artifactcert-src /path/to/src file.docx [...]
+
+Run it with an interpreter that can import artifactcert (its own .venv works).
+"""
+
+from __future__ import annotations
+
+import os
+import sys
+import zipfile
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+
+def _load_artifactcert(src: str | None):
+    candidates = [
+        src,
+        os.environ.get("ARTIFACTCERT_SRC"),
+        "/media/volume/cpu-vm/ArtifactCert/src",
+        str(Path.home() / "ArtifactCert" / "src"),
+    ]
+    for cand in candidates:
+        if cand and (Path(cand) / "artifactcert" / "docx_manifest.py").is_file():
+            sys.path.insert(0, cand)
+            from artifactcert.docx_manifest import enumerate_paragraphs, paragraph_text
+            from artifactcert.opc_xml import parse_untrusted_xml
+
+            return enumerate_paragraphs, paragraph_text, parse_untrusted_xml, cand
+    raise SystemExit(
+        "cannot locate ArtifactCert's src/ -- pass --artifactcert-src or set ARTIFACTCERT_SRC"
+    )
+
+
+def main(argv: list[str]) -> int:
+    args = argv[1:]
+    src = None
+    if args and args[0] == "--artifactcert-src":
+        src = args[1]
+        args = args[2:]
+    if not args:
+        print(__doc__)
+        return 2
+
+    enumerate_paragraphs, paragraph_text, parse_untrusted_xml, resolved = _load_artifactcert(src)
+    from mathpatch import CANONICAL_TEXT_CONTRACT_VERSION, SENTINEL, project
+
+    W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+    print(f"artifactcert src : {resolved}")
+    print(f"contract version : {CANONICAL_TEXT_CONTRACT_VERSION}")
+    print(f"sentinel         : U+{ord(SENTINEL):04X}\n")
+
+    grand = {"paras": 0, "mathfree": 0, "math": 0, "spans": 0, "fail": 0}
+    failures: list[str] = []
+
+    for path in args:
+        try:
+            with zipfile.ZipFile(path) as z:
+                raw = z.read("word/document.xml")
+        except (zipfile.BadZipFile, KeyError, OSError) as exc:
+            print(f"!! {os.path.basename(path)}: {exc}", file=sys.stderr)
+            continue
+
+        root = parse_untrusted_xml(raw, part_name="word/document.xml")
+        body = root.find(f"{{{W}}}body")
+        if body is None:
+            print(f"!! {os.path.basename(path)}: no w:body", file=sys.stderr)
+            continue
+
+        stats = {"paras": 0, "mathfree": 0, "math": 0, "spans": 0, "fail": 0}
+        for loc, p in enumerate_paragraphs(body):
+            ac = paragraph_text(p)
+            proj = project(p)
+            stats["paras"] += 1
+
+            if not proj.spans:
+                stats["mathfree"] += 1
+                if proj.text != ac:
+                    stats["fail"] += 1
+                    failures.append(
+                        f"{os.path.basename(path)} {loc}: math-free text differs\n"
+                        f"    artifactcert={ac!r}\n    mathpatch   ={proj.text!r}"
+                    )
+                continue
+
+            stats["math"] += 1
+            stats["spans"] += len(proj.spans)
+            stripped = proj.text.replace(SENTINEL, "")
+            if stripped != ac:
+                stats["fail"] += 1
+                failures.append(
+                    f"{os.path.basename(path)} {loc}: not a strict extension\n"
+                    f"    artifactcert       ={ac!r}\n    mathpatch(sentinels stripped)={stripped!r}"
+                )
+            if proj.text.count(SENTINEL) != len(proj.spans):
+                stats["fail"] += 1
+                failures.append(
+                    f"{os.path.basename(path)} {loc}: {len(proj.spans)} spans but "
+                    f"{proj.text.count(SENTINEL)} sentinels"
+                )
+            for span in proj.spans:
+                if proj.text[span.start : span.end] != SENTINEL:
+                    stats["fail"] += 1
+                    failures.append(
+                        f"{os.path.basename(path)} {loc}: span {span.ordinal} at "
+                        f"[{span.start},{span.end}) does not land on a sentinel"
+                    )
+
+        print(f"{os.path.basename(path)[:52]:54s} paras={stats['paras']:5d} "
+              f"math-free={stats['mathfree']:5d} math={stats['math']:4d} "
+              f"spans={stats['spans']:4d} FAIL={stats['fail']:3d}")
+        for k in grand:
+            grand[k] += stats[k]
+
+    print(f"\n{'TOTAL':54s} paras={grand['paras']:5d} math-free={grand['mathfree']:5d} "
+          f"math={grand['math']:4d} spans={grand['spans']:4d} FAIL={grand['fail']:3d}")
+
+    if failures:
+        print(f"\n{len(failures)} failure(s):")
+        for f in failures[:20]:
+            print(f"  {f}")
+        if len(failures) > 20:
+            print(f"  ... and {len(failures) - 20} more")
+        print("\nM0 GATE: FAILED")
+        return 1
+
+    print("\nM0 GATE: PASSED -- the projection is a strict extension of _para_text on")
+    print("         every paragraph of this corpus, differing only in sentinel positions.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))

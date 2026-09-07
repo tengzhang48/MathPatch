@@ -226,6 +226,55 @@ document-wide tracked-changes guard makes that unreachable, so it is not a live 
 MathPatch's own span discovery must descend, not scan direct children, or it will
 under-report protected spans in exactly the documents ArtifactCert emits.
 
+### F6 — ArtifactCert holds two definitions of run text (latent)
+
+`docx_manifest._para_text` (`docx_manifest.py:468`) extracts a run's text with
+`child.iter(qn("w:t"))` — all `w:t` **descendants**. `docx_patch/safety._run_text`
+(`safety.py:88`) uses `run.findall(qn("t"))` — **direct children only**.
+
+Two definitions of one fact, in the two files whose offsets must agree. Measured: they
+agree on **all 12,394 runs** of the reference corpus, so the difference is latent, not
+live. But it is the drift hazard `docx_patch/locator.py`'s docstring exists to prevent,
+sitting unguarded between two modules.
+
+MathPatch's `run_text` follows `_para_text` (the anchor space, see F7). When the
+projection is integrated, both call sites should delegate to it, which retires F6 as a
+side effect — the integration collapses two definitions into one.
+
+### F7 — the two coordinate spaces are already skewed, and it mis-targets patches (LIVE)
+
+`engine.apply_patches` locates the anchor in `_para_text`'s space:
+
+    text = paragraph_text(p)              # hyperlink text contributes NOTHING
+    span_start = text.index(anchor)
+    verdict = safety.analyze_paragraph(p, span_start, span_end)
+
+but `safety.analyze_paragraph` re-walks the paragraph and, for `w:hyperlink` /
+`w:smartTag`, advances its offset **by that element's text width**
+(`safety.py:197-206`). Every fragment offset after a text-carrying hyperlink is
+therefore shifted by its width relative to the space the anchor was located in.
+
+Reproduced with ArtifactCert's own code — `tools/probe_offset_skew.py`, two outcomes:
+
+- **A, false refusal.** 8-char link: the shifted hyperlink interval still overlaps the
+  edit span, so a safe edit is refused as `PATCH_NOT_SAFE_HYPERLINK_INTERSECTS_TARGET`.
+- **B, mis-target.** 4-char link: the shift moves the interval clear of the span, no
+  refusal fires, and the patch overwrites the wrong characters —
+  `'AAA  <<REPLACED>>rget CCC'` where `'AAA  BBB <<REPLACED>> CCC'` was authorized.
+
+Two paragraphs in the reference corpus have the exposing shape (a text-carrying
+hyperlink followed by editable text). This is a defect in ArtifactCert, not in
+MathPatch, and it is **not** MathPatch's to fix — but it is load-bearing for M1:
+
+> The sentinel must be emitted by the same walk that advances a consumer's offsets.
+> If `safety.analyze_paragraph` keeps re-walking with its own rules, math offsets will
+> acquire an identical skew the moment they are consumed.
+
+That is why the projection follows `_para_text` and not `safety`: `_para_text`'s space
+is the one in which the anchor is located, and therefore the one that decides which
+characters an edit actually overwrites. F7 must be resolved in favour of the
+projection.
+
 ---
 
 ## 4. Corpus evidence
@@ -300,6 +349,21 @@ Deliver, against synthetic fixtures plus the real corpus, read-only:
 **Completion check:** on all four corpus manuscripts, for every math-free paragraph,
 `mathpatch.canonical_text(p) == artifactcert._para_text(p)`; for every math paragraph, the
 projections differ in exactly the sentinel positions and nowhere else. Zero exceptions.
+
+**STATUS: M0 COMPLETE (2026-09-07).** `tools/drift_gate.py`, run over six documents
+(the four distinct manuscripts plus two tracked-changes derivatives, which exercise the
+`w:ins` nesting path of F5):
+
+    paras=3598   math-free=3207   math-bearing=391   spans=851   FAIL=0
+
+`tools/c14n_roundtrip_probe.py` settled Tier 2 before any of it was written: C14N
+digests of untouched math subtrees survive a parse -> mutate -> reserialize -> reparse
+round trip on all 499 spans of the four manuscripts, in all three scenarios including
+the actual M1 operation (editing text in a math-bearing paragraph). All four candidate
+parameter sets were stable, so the choice rests on purpose — see `digest.py`.
+
+27 unit tests cover the fixture matrix of section 9. Two findings were added to this
+plan during M0: F6 and F7.
 
 ### M1 — retire the blanket math refusal (ArtifactCert integration)
 
@@ -396,7 +460,10 @@ payload hashes, protected-span C14N digests, ArtifactCert binding re-verificatio
         # Phase 2:
         ast.py  omml_reader.py  omml_writer.py  latex_adapter.py
     tools/
-        corpus_math_inventory.py
+        corpus_math_inventory.py   # F2 baseline: representation + shape tables
+        c14n_roundtrip_probe.py    # settles section 5 Tier 2 before relying on it
+        drift_gate.py              # the M0 gate: strict extension of _para_text
+        probe_offset_skew.py       # reproduces F7 against ArtifactCert's own code
     tests/
         fixtures/
 
