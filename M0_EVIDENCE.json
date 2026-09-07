@@ -1,9 +1,10 @@
 {
   "artifactcert": {
-    "commit": "a95733cfd0f42d0c33d17ffc4ea92fb5c72b77c2",
-    "origin_main": "0992741068cd3f0806d3ff63958a43a84a38bd32",
-    "origin_main_date": "2026-09-07T20:52:38+00:00",
-    "src": "/media/volume/cpu-vm/ArtifactCert/src"
+    "commit": "0992741068cd3f0806d3ff63958a43a84a38bd32",
+    "origin_main": "ce8ffde86b31bd931593f7d0fc8468fbee85dfd1",
+    "origin_main_date": "2026-09-07T23:34:48+00:00",
+    "pinned_target": "0992741068cd3f0806d3ff63958a43a84a38bd32",
+    "src": "/tmp/artifactcert-pinned-333366/src"
   },
   "checks": {
     "note": "drift gate and C14N probe are run by tools/verify_m0.sh; this record binds the inputs they were run against.",
@@ -13,6 +14,7 @@
     {
       "alias": "doc-01",
       "bytes": 3670740,
+      "detection_disagreements": 0,
       "math_paragraph_count": 20,
       "math_span_count": 59,
       "paragraph_count": 100,
@@ -22,6 +24,7 @@
     {
       "alias": "doc-02",
       "bytes": 22586641,
+      "detection_disagreements": 0,
       "math_paragraph_count": 141,
       "math_span_count": 316,
       "paragraph_count": 933,
@@ -31,6 +34,7 @@
     {
       "alias": "doc-03",
       "bytes": 22624572,
+      "detection_disagreements": 0,
       "math_paragraph_count": 141,
       "math_span_count": 316,
       "paragraph_count": 1047,
@@ -40,6 +44,7 @@
     {
       "alias": "doc-04",
       "bytes": 22638424,
+      "detection_disagreements": 0,
       "math_paragraph_count": 141,
       "math_span_count": 316,
       "paragraph_count": 1171,
@@ -49,6 +54,7 @@
     {
       "alias": "doc-05",
       "bytes": 13733878,
+      "detection_disagreements": 0,
       "math_paragraph_count": 51,
       "math_span_count": 90,
       "paragraph_count": 487,
@@ -58,6 +64,7 @@
     {
       "alias": "doc-06",
       "bytes": 14717473,
+      "detection_disagreements": 0,
       "math_paragraph_count": 19,
       "math_span_count": 36,
       "paragraph_count": 456,
@@ -67,6 +74,7 @@
     {
       "alias": "doc-07",
       "bytes": 13249643,
+      "detection_disagreements": 0,
       "math_paragraph_count": 19,
       "math_span_count": 34,
       "paragraph_count": 451,
@@ -81,17 +89,17 @@
   },
   "fixture": {
     "path": "tests/fixtures/descent.docx",
-    "sha256": "cf1912513629f74534c92eadb4f8e3eaae1b66468856861ddae1b194b1e4b5b7"
+    "sha256": "b9c7ce31f6ceb07b05b8d00668f1f7145ed1f4ad424d6291c6e1e3fc99f60317"
   },
-  "generated_utc": "2026-09-07T23:06:26+00:00",
+  "generated_utc": "2026-09-07T23:37:39+00:00",
   "mathpatch": {
     "c14n_kwargs": {
       "exclusive": true,
       "with_comments": true
     },
-    "canonical_text_contract_version": "1.0.0",
-    "commit": "73c0a0c7cc15cbbc753360f47453ed039581096b",
-    "dirty": true,
+    "canonical_text_contract_version": "1.1.0",
+    "commit": "f88fda5089f055af6802c65635fdc814c38bd1ae",
+    "dirty": false,
     "version": "0.1.0"
   },
   "record": "MathPatch M0 evidence"
