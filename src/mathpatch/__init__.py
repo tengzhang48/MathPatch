@@ -12,6 +12,7 @@ from __future__ import annotations
 from .canonical import (
     CANONICAL_TEXT_CONTRACT_VERSION,
     Projection,
+    SentinelCollision,
     canonical_text,
     intersects_math,
     math_spans,
@@ -43,6 +44,7 @@ __all__ = [
     "ProtectedMathSpan",
     "Projection",
     "SENTINEL",
+    "SentinelCollision",
     "W_NS",
     "__version__",
     "c14n_bytes",

@@ -2,19 +2,27 @@
 
 **Precise, auditable editing of equations in Word documents.**
 
-MathPatch reads native Office Math (OMML) out of `.docx` files, represents it, modifies it
-under an explicit authorization, writes it back, and proves that nothing else changed.
-
-Its distinctive claim is not conversion:
+The distinctive claim is not conversion:
 
 > **Edit an existing scientific equation safely, rather than regenerate it.**
 
-## MathPatch is
+## What exists today (M0 / M0.1)
+
+- **equation-aware canonical projection** — one traversal of a paragraph yields its canonical
+  text and the positions of every math span, so text and offsets cannot disagree
+- **protected-span discovery** — outermost-only (an `m:oMathPara` is one span, not two) and by
+  descent (math inside a revision wrapper, hyperlink, or run is still found)
+- **round-trip-stable digests** — C14N hashes that survive an lxml parse/mutate/reserialize
+  cycle, so a protected equation can be *proven* unchanged rather than assumed unchanged
+
+That is a read-only foundation. It does not yet modify an equation.
+
+## Target capability
 
 - native Word equation extraction
-- semantic equation representation
-- controlled equation modification
-- OMML generation and patching
+- semantic equation representation with **source provenance**
+- controlled equation modification under an explicit authorization
+- minimum-disturbance OMML patching (mutate the smallest existing node; never regenerate)
 - round-trip verification
 - change provenance
 
@@ -31,27 +39,33 @@ Its distinctive claim is not conversion:
 
 MathPatch owns **math representation and serialization**. It does **not** own document
 addressing, object identity, authorization, or release decisions — those belong to the
-consuming application. Every entry point takes an already-located `lxml` element and
-returns offsets relative to that element; MathPatch never opens a file, resolves a
-locator, or sees an object id.
+consuming application. Every entry point takes an already-located `lxml` element and returns
+offsets relative to that element; MathPatch never opens a file, resolves a locator, or sees an
+object id.
 
-It is designed to be integrated into [ArtifactCert](https://github.com/tengzhang48/ArtifactCert)
-as its math capability, while remaining usable on its own.
+It is designed to be integrated into
+[ArtifactCert](https://github.com/tengzhang48/ArtifactCert) as its math capability, while
+remaining usable on its own.
 
-## Status
+## Status and evidence
 
-M0 complete — the canonical projection, span discovery, and C14N digests are implemented and
-gated against a real corpus (4,654 paragraphs, 1,175 math spans, zero drift); run
-`tools/verify_m0.sh` to reproduce every claim. See
-**[PLAN.md](PLAN.md)** for the design, the milestones, and the
-findings from real manuscripts and real integration code that shape them.
+See **[PLAN.md](PLAN.md)** for the design, the milestones, and the findings — from real
+manuscripts and from real integration code — that shape them. Findings that turned out to be
+wrong are marked RETRACTED there rather than deleted.
 
-Measure a corpus before trusting any recovery estimate:
+`M0_EVIDENCE.json` binds the current claims to exact commits, versions, and per-document
+content hashes. To re-derive everything locally:
 
 ```
-ARTIFACTCERT_DIR=/path/to/docx tools/corpus_math_inventory.py
+ARTIFACTCERT_DIR=/path/to/manuscripts \
+ARTIFACTCERT_PY=/path/to/ArtifactCert/.venv/bin/python \
+tools/verify_m0.sh
 ```
+
+The drift gate needs an importable ArtifactCert because it compares against that project's own
+`_para_text`; copying that function here would be the drift the gate exists to detect. CI runs
+only the synthetic suite, so a green badge proves internal consistency, not the corpus claims.
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).

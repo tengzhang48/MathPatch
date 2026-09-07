@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from conftest import omath, omathpara, para, run
 
 from mathpatch import (
@@ -186,3 +187,64 @@ def test_outermost_math_agrees_with_the_projection():
     from_projection = [s.element for s in math_spans(p)]
     assert len(from_helper) == len(from_projection) == 4
     assert all(a is b for a, b in zip(from_helper, from_projection))
+
+
+class TestHardening:
+    """M0.1: refuse or handle the shapes the corpus happened not to contain."""
+
+    def test_xml_comment_child_is_skipped(self):
+        """ArtifactCert's parser keeps comments (remove_comments=False), so they
+        reach the projection by design. lxml gives them a callable tag, which
+        QName() rejects."""
+        p = para(run("a") + "<!-- reviewer note -->" + run("b"))
+        assert canonical_text(p) == "ab"
+
+    def test_processing_instruction_child_is_skipped(self):
+        p = para(run("a") + "<?custom directive?>" + run("b"))
+        assert canonical_text(p) == "ab"
+
+    def test_comment_does_not_hide_math(self):
+        p = para(run("a") + f"<w:ins><!-- c -->{omath()}</w:ins>" + run("b"))
+        assert len(math_spans(p)) == 1
+
+    def test_nested_run_text_is_included_and_flagged(self):
+        """_para_text reaches every w:t descendant of a direct w:r, so dropping a
+        nested run's text would break strict extension. Word does not emit this
+        shape (0 of 21,433 measured runs), so it is also reported as an anomaly."""
+        p = para("<w:r><w:t>outer</w:t><w:r><w:t>NESTED</w:t></w:r></w:r>")
+        proj = project(p)
+        assert proj.text == "outerNESTED"
+        assert "nested_run" in proj.anomalies
+
+    def test_ordinary_paragraph_reports_no_anomalies(self):
+        p = para(run("plain ") + omath() + run(" text"))
+        assert project(p).anomalies == ()
+
+    def test_authored_sentinel_is_refused(self):
+        """Absence from one corpus is not a property of Word documents. An
+        authored U+FFFC would make sentinel_offsets() disagree with spans."""
+        from mathpatch import SentinelCollision
+
+        p = para(run(f"real{SENTINEL}text"))
+        with pytest.raises(SentinelCollision) as exc:
+            canonical_text(p)
+        assert "FFFC" in str(exc.value)
+
+    def test_authored_sentinel_refused_even_with_real_math(self):
+        from mathpatch import SentinelCollision
+
+        p = para(run(f"a{SENTINEL}b") + omath())
+        with pytest.raises(SentinelCollision):
+            project(p)
+
+    @pytest.mark.parametrize("start,end", [(-5, -1), (0, 99), (5, 2), (-1, 3)])
+    def test_intersects_math_rejects_impossible_ranges(self, start, end):
+        p = para(run("aaa") + omath() + run("bbb"))
+        with pytest.raises(ValueError):
+            intersects_math(p, start, end)
+
+    def test_intersects_math_accepts_the_full_valid_range(self):
+        p = para(run("aaa") + omath() + run("bbb"))
+        text = canonical_text(p)
+        assert len(intersects_math(p, 0, len(text))) == 1
+        assert intersects_math(p, 0, 0) == ()

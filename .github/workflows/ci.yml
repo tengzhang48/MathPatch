@@ -1,0 +1,37 @@
+name: tests
+
+# Runs the SYNTHETIC suite only. The drift gate and C14N probe need a real
+# manuscript corpus and an importable ArtifactCert, neither of which belongs in
+# CI -- run tools/verify_m0.sh locally for those. CI therefore proves the library
+# is internally consistent, not that M0's corpus claims hold.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+      - name: Unit tests
+        run: python -m pytest -q
+      - name: Fixture generator is reproducible
+        run: |
+          python tools/make_fixture_docx.py
+          git diff --exit-code --stat -- tests/fixtures/ || \
+            (echo "descent.docx changed; commit the regenerated fixture" && exit 1)
+      - name: Corpus inventory runs on the synthetic fixture
+        run: python tools/corpus_math_inventory.py tests/fixtures/descent.docx

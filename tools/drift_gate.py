@@ -83,7 +83,13 @@ def main(argv: list[str]) -> int:
         parse_untrusted_xml,
         resolved,
     ) = _load_artifactcert(src)
-    from mathpatch import CANONICAL_TEXT_CONTRACT_VERSION, MATH_TAGS, SENTINEL, project
+    from mathpatch import (
+        CANONICAL_TEXT_CONTRACT_VERSION,
+        MATH_TAGS,
+        SENTINEL,
+        SentinelCollision,
+        project,
+    )
 
     W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
     print(f"artifactcert src : {resolved}")
@@ -92,25 +98,39 @@ def main(argv: list[str]) -> int:
 
     grand = {"paras": 0, "mathfree": 0, "math": 0, "spans": 0, "fail": 0}
     failures: list[str] = []
+    unchecked: list[str] = []  # an input we could not check is a GATE FAILURE
 
     for path in args:
         try:
             with zipfile.ZipFile(path) as z:
                 raw = z.read("word/document.xml")
         except (zipfile.BadZipFile, KeyError, OSError) as exc:
-            print(f"!! {os.path.basename(path)}: {exc}", file=sys.stderr)
+            unchecked.append(f"{os.path.basename(path)}: unreadable ({exc})")
+            print(f"{os.path.basename(path)[:52]:54s} UNREADABLE -- {exc}")
             continue
 
-        root = parse_untrusted_xml(raw, part_name="word/document.xml")
+        try:
+            root = parse_untrusted_xml(raw, part_name="word/document.xml")
+        except ValueError as exc:
+            unchecked.append(f"{os.path.basename(path)}: refused by parser ({exc})")
+            print(f"{os.path.basename(path)[:52]:54s} PARSER REFUSED -- {exc}")
+            continue
         body = root.find(f"{{{W}}}body")
         if body is None:
-            print(f"!! {os.path.basename(path)}: no w:body", file=sys.stderr)
+            unchecked.append(f"{os.path.basename(path)}: no w:body")
+            print(f"{os.path.basename(path)[:52]:54s} NO w:body")
             continue
 
         stats = {"paras": 0, "mathfree": 0, "math": 0, "spans": 0, "fail": 0}
         for loc, p in enumerate_paragraphs(body):
             ac = paragraph_text(p)
-            proj = project(p)
+            try:
+                proj = project(p)
+            except SentinelCollision as exc:
+                stats["fail"] += 1
+                failures.append(f"{os.path.basename(path)} {loc}: {exc}")
+                stats["paras"] += 1
+                continue
             stats["paras"] += 1
 
             # Branch on ArtifactCert's INDEPENDENT math detection, not on our own
@@ -182,6 +202,13 @@ def main(argv: list[str]) -> int:
 
     print(f"\n{'TOTAL':54s} paras={grand['paras']:5d} math-free={grand['mathfree']:5d} "
           f"math={grand['math']:4d} spans={grand['spans']:4d} FAIL={grand['fail']:3d}")
+
+    if unchecked:
+        print(f"\n{len(unchecked)} input(s) NOT CHECKED:")
+        for u in unchecked:
+            print(f"  {u}")
+        print("\nM0 GATE: FAILED -- an input that cannot be checked is not a pass.")
+        return 1
 
     if failures:
         print(f"\n{len(failures)} failure(s):")

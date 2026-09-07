@@ -1,0 +1,98 @@
+{
+  "artifactcert": {
+    "commit": "a95733cfd0f42d0c33d17ffc4ea92fb5c72b77c2",
+    "origin_main": "0992741068cd3f0806d3ff63958a43a84a38bd32",
+    "origin_main_date": "2026-09-07T20:52:38+00:00",
+    "src": "/media/volume/cpu-vm/ArtifactCert/src"
+  },
+  "checks": {
+    "note": "drift gate and C14N probe are run by tools/verify_m0.sh; this record binds the inputs they were run against.",
+    "unit_tests": true
+  },
+  "corpus": [
+    {
+      "alias": "doc-01",
+      "bytes": 3670740,
+      "math_paragraph_count": 20,
+      "math_span_count": 59,
+      "paragraph_count": 100,
+      "paragraphs_with_anomalies": 0,
+      "sha256": "f5537f1db90844c7e31aa7a71e5e05fa29d49e1029e9fc9d27f1989c79733180"
+    },
+    {
+      "alias": "doc-02",
+      "bytes": 22586641,
+      "math_paragraph_count": 141,
+      "math_span_count": 316,
+      "paragraph_count": 933,
+      "paragraphs_with_anomalies": 0,
+      "sha256": "cfeabc5eb9b41951c6cd5b5b369bbbba5a3b527b31e688ee96cf89bf932bba0e"
+    },
+    {
+      "alias": "doc-03",
+      "bytes": 22624572,
+      "math_paragraph_count": 141,
+      "math_span_count": 316,
+      "paragraph_count": 1047,
+      "paragraphs_with_anomalies": 0,
+      "sha256": "6a75533b64af967a83fa51106a8b9864105e4ad8e67ed159b452d58b81f7e436"
+    },
+    {
+      "alias": "doc-04",
+      "bytes": 22638424,
+      "math_paragraph_count": 141,
+      "math_span_count": 316,
+      "paragraph_count": 1171,
+      "paragraphs_with_anomalies": 0,
+      "sha256": "4279b2683be883a87b3b3c8b0369bb96cb418c1a9b54984faba784e94c0ebed8"
+    },
+    {
+      "alias": "doc-05",
+      "bytes": 13733878,
+      "math_paragraph_count": 51,
+      "math_span_count": 90,
+      "paragraph_count": 487,
+      "paragraphs_with_anomalies": 0,
+      "sha256": "bf53aa7e5fa3aa287f9e239251a8a1975a8e0064e170d3f9ce9ff5690588b356"
+    },
+    {
+      "alias": "doc-06",
+      "bytes": 14717473,
+      "math_paragraph_count": 19,
+      "math_span_count": 36,
+      "paragraph_count": 456,
+      "paragraphs_with_anomalies": 0,
+      "sha256": "898cf4c3098e3451acd716960b80f74f119c19e347b0e45161670ebf68bd4890"
+    },
+    {
+      "alias": "doc-07",
+      "bytes": 13249643,
+      "math_paragraph_count": 19,
+      "math_span_count": 34,
+      "paragraph_count": 451,
+      "paragraphs_with_anomalies": 0,
+      "sha256": "10491c5c8c2da4ce8271f2da57c764774d8b41a974a9b1110ec86a3cea9752d9"
+    }
+  ],
+  "environment": {
+    "lxml": "6.1.3",
+    "platform": "Linux-7.0.0-29-generic-x86_64-with-glibc2.39",
+    "python": "3.13.9"
+  },
+  "fixture": {
+    "path": "tests/fixtures/descent.docx",
+    "sha256": "cf1912513629f74534c92eadb4f8e3eaae1b66468856861ddae1b194b1e4b5b7"
+  },
+  "generated_utc": "2026-09-07T23:06:26+00:00",
+  "mathpatch": {
+    "c14n_kwargs": {
+      "exclusive": true,
+      "with_comments": true
+    },
+    "canonical_text_contract_version": "1.0.0",
+    "commit": "73c0a0c7cc15cbbc753360f47453ed039581096b",
+    "dirty": true,
+    "version": "0.1.0"
+  },
+  "record": "MathPatch M0 evidence"
+}

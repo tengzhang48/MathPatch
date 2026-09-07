@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
-"""Reproduce PLAN.md F7: a live offset skew in ArtifactCert's patch engine.
+"""Regression probe for PLAN.md F7: the hyperlink/anchor coordinate skew.
 
-This demonstrates a defect in ArtifactCert, not in MathPatch. It lives here because
-it was found while defining MathPatch's coordinate space, and because it constrains
-M1: the math sentinel must be emitted by the SAME walk that advances a consumer's
-offsets, or math will acquire an identical skew the moment its offsets are consumed.
+F7 is RETRACTED as a finding. ArtifactCert fixed this on 2026-08-24, before MathPatch
+existed; the original report here was read off a tree diverged by 195 commits. Against
+a current tree this script should print "F7 NOT reproduced".
+
+It is kept for two reasons: it is a real regression check for a real past defect, and
+it is the standing reminder of why this project fetches and quotes a commit hash before
+claiming what ArtifactCert "currently" does (see PLAN.md, "Reading the ArtifactCert
+tree").
 
 The two coordinate spaces:
 
@@ -107,7 +111,10 @@ def main() -> int:
         print("Fix direction: derive safety's offset walk from the same projection that")
         print("produces the anchor text, rather than re-walking with different rules.")
         return 1
-    print("F7 not reproduced -- the spaces agree here; re-check the fix.")
+    print("F7 NOT reproduced: the two coordinate spaces agree in this tree.")
+    print("Expected against ArtifactCert origin/main -- the fix landed 2026-08-24")
+    print("(safety.py: hyperlink/smartTag boundaries in canonical coordinates).")
+    print("This probe is now a REGRESSION check: a reproduction here means it came back.")
     return 0
 
 

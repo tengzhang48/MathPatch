@@ -148,12 +148,15 @@ def main(argv: list[str]) -> int:
         return 2
 
     unstable = False
+    unchecked: list[str] = []
+    skipped = 0
     for path in paths:
         try:
             with zipfile.ZipFile(path) as z:
                 raw = z.read("word/document.xml")
         except (zipfile.BadZipFile, KeyError, OSError) as exc:
-            print(f"!! {os.path.basename(path)}: {exc}", file=sys.stderr)
+            unchecked.append(f"{os.path.basename(path)}: {exc}")
+            print(f"\n{os.path.basename(path)}\n  UNREADABLE -- {exc}")
             continue
 
         print(f"\n{os.path.basename(path)}")
@@ -164,6 +167,7 @@ def main(argv: list[str]) -> int:
         ):
             r = scenario(raw, name, mut)
             if "skipped" in r:
+                skipped += 1
                 print(f"  {r['name']:34s} SKIPPED ({r['skipped']})")
                 continue
             if "fatal" in r:
@@ -178,6 +182,14 @@ def main(argv: list[str]) -> int:
                   f"  c14n-changed={r['c14n_changed']:4d}   {verdict}")
 
     print()
+    if unchecked:
+        print(f"{len(unchecked)} input(s) NOT CHECKED:")
+        for u in unchecked:
+            print(f"  {u}")
+        print("RESULT: FAILED -- an input that cannot be read proves nothing.")
+        return 1
+    if skipped:
+        print(f"NOTE: {skipped} scenario(s) skipped for want of a suitable paragraph.")
     if unstable:
         print("RESULT: C14N is NOT stable under lxml round trip -> PLAN.md section 5 Tier 2")
         print("        needs redesign (consider raw-XML splicing of the target part).")

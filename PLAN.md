@@ -1,6 +1,7 @@
 # MathPatch — Plan
 
-**Status:** standalone repository, pre-implementation.
+**Status:** M0 and M0.1 complete. Verified against ArtifactCert `origin/main` at
+`0992741` (2026-09-07) — see the reading discipline in section 3.
 **Relationship to ArtifactCert:** MathPatch is developed as an independent package and
 integrated into ArtifactCert afterwards. It is not a fork, not a plugin, and it never
 becomes an authority over document identity.
@@ -51,22 +52,44 @@ Fold it back; do not defend the repository.
 
 ## 1. What MathPatch is for
 
-ArtifactCert currently fails closed on any patch whose target paragraph contains Office
-Math (`artifactcert/docx_patch/safety.py:210`):
+**Rebased 2026-09-07 against ArtifactCert `origin/main` = `0992741`.** An earlier version of
+this section argued that ArtifactCert blocks every text patch in a math-bearing paragraph and
+that MathPatch's first job is to unblock them. That was read off a diverged tree and is false
+on main. What main already does:
 
-    PATCH_NOT_SAFE_MATH_IN_TARGET
-    "Target paragraph contains Office Math; math editing is out of scope for v0."
+- refuses only when the edit span **crosses** a math boundary
+  (`safety.py`: `if span_start < offset < span_end`); prose elsewhere in a math paragraph is
+  editable, and math is a zero-width structural boundary in canonical text;
+- decomposes a **deletion-only** edit into disjoint plain-text ranges around intervening
+  equations (`engine.deletion_only_ranges`, `_apply_deletion_only_diff_around_structure`),
+  checks each range independently with the ordinary safety analyzer, and applies them
+  right-to-left so canonical offsets stay stable. Its own worked example is the interleaved
+  case: `length of [l_f], thickness of [h_f], modulus of [E_f]`. The alignment is a greedy
+  left-to-right subsequence match rather than `SequenceMatcher`, deliberately, because
+  repeated letters could otherwise report a deletion that "spuriously cross[es] the preceding
+  equation";
+- shares that decomposition with the Track Changes projector rather than duplicating it.
 
-That refusal is correct for the current implementation and blocks a large fraction of
-otherwise safe text edits in real scientific manuscripts. The first useful capability is
-therefore **not** equation modification:
+So the honest motivation is narrower and sharper. Two things are missing, and both are
+MathPatch's:
 
-> Allow ordinary text patches to proceed inside paragraphs that contain math, preserving
-> each math span exactly, and refuse only when the authorized edit actually intersects math.
+**(1) Protected math is counted, not proven.** After a patch, main's regression report records
+a document-wide **count** of `oMath` elements (`regression.py:157`) and compares canonical
+text, which excludes math. C14N hashing exists in `docx_track_changes.py` and
+`revision_ingest.py`, but not in the patch regression path. A count cannot distinguish two
+equations exchanging contents, or one equation's internals being altered. The engine only
+rewrites `w:r` text so it probably never does that — but `safety.py`'s own comment, *"The
+regression report still proves that its XML stayed put,"* claims more than the code
+establishes. For a project whose principle is that no actor certifies its own patch, that is
+the invariant worth closing, and a per-span C14N digest closes it.
 
-Equation *modification* comes second, and is the smaller half of the value.
+**(2) Equation modification does not exist anywhere.** Main reads OMML for *display* only
+(`docx_view._omml_to_latex`, via `dwml` + KaTeX) and quotes equations to reviewers
+(`external_review_export`, commit `335f20d`). There is no Math AST, no OMML writer, and no
+mutation path. That is the distinctive capability, and it stays MathPatch's:
 
----
+> **Edit an existing scientific equation safely, rather than regenerate it.**
+
 
 ## 2. Boundary contract (binding)
 
@@ -101,84 +124,76 @@ object id.
 
 ### The canonical-text contract
 
-ArtifactCert's `docx_manifest._para_text` becomes a thin delegate to
-`mathpatch.canonical_text`, so there is exactly **one** definition of canonical paragraph
-text — the same move already made for `docx_patch/locator.py`, which is deliberately a
-re-export of core so that two enumerations cannot drift.
+**Revised 2026-09-07: the identity migration is withdrawn.** An earlier version committed to
+making `docx_manifest._para_text` a thin delegate to `mathpatch.canonical_text`, on the grounds
+that one definition of canonical text is better than two. The reasoning still holds in the
+abstract, but the justification for paying its cost does not: F1 is retracted, main already
+edits prose safely around zero-width math, and changing `_para_text` would change the stored
+text of every math-bearing paragraph and every hash derived from it — a migration across a
+repository with many live worktrees and a running pilot, in exchange for capability that
+already exists.
 
-This inverts the dependency: ArtifactCert's object identity would then depend on an external
-package's text projection. That is only safe if it is versioned and recorded, so:
+For now MathPatch's projection is an **internal structural and protection representation**, not
+ArtifactCert's persisted canonical identity. The sentinel never has to reach a stored object.
 
-1. MathPatch exposes `CANONICAL_TEXT_CONTRACT_VERSION`, bumped on **any** change to the
-   projection.
-2. ArtifactCert records that version in the candidate/manifest alongside policy version and
-   reviewer configuration.
-3. ArtifactCert pins MathPatch to an exact version.
-4. A version mismatch against a stored candidate is a **refusal**, not a warning.
+`CANONICAL_TEXT_CONTRACT_VERSION` is kept anyway, and matters the moment any consumer derives
+persisted state from the projection:
 
-Without (1)–(4) a dependency bump silently changes candidate identity in an audit tool.
+1. MathPatch bumps it on **any** change to the projection.
+2. A consumer that stores anything derived from canonical text records the version alongside it.
+3. A version mismatch against stored state is a **refusal**, not a warning.
+4. Pin MathPatch to an exact version.
 
----
+Without (1)-(4) a dependency bump silently changes identity in an audit tool. With the
+migration withdrawn, none of it is load-bearing yet — which is the point of writing it down
+before it is.
+
 
 ## 3. Findings from the ArtifactCert code that shape this design
 
 Verified against the tree at `a95733c` on 2026-09-07.
 
-### F1 — Math is currently zero-width in the only coordinate space that exists
+### F1 — RETRACTED (was: math is zero-width so intersection is undecidable)
 
-`docx_manifest._para_text` (`docx_manifest.py:455`) is the concatenation of direct `w:r`
-children's `w:t` **only**. Its docstring is explicit that math *"is deliberately NOT part of
-the canonical text ... so it must also be invisible to matching."* `RunFragment.start/end`
-(`docx_patch/safety.py:71`) are offsets in that same space.
+**Retracted 2026-09-07.** The observation about the coordinate space is correct — math
+contributes zero width to canonical text — but the conclusion was wrong. Main treats math as a
+**structural boundary at an offset** and tests `span_start < offset < span_end`, which is
+decidable and needs no sentinel: an edit may end exactly where math begins, and only an edit
+strictly spanning the boundary is refused. MathPatch's `intersects_math` independently arrived
+at the same strict-inequality convention, which is mutual corroboration rather than a finding.
 
-So a math span occupies **zero characters**, and "the edit range does not intersect the math
-span" is undecidable — a zero-width point at offset *k* lies in `[start, end)` only by
-convention.
+The claim that this blocked 12.8–21.3% of text-bearing paragraphs was measured against a
+diverged tree and is **false on main**.
 
-This is latent, not a live bug, because `safety.py:210` refuses first. Lifting that refusal
-without fixing the coordinate space makes it live:
+What survives: the sentinel is still useful for *showing* a reviewer where an equation sits in
+a sentence, and for making span arithmetic non-degenerate inside MathPatch. It is **not**
+grounds for changing ArtifactCert's persisted canonical text, and the identity migration this
+finding once justified is withdrawn.
 
-    actual:       "The deformation <math> increases rapidly."
-    canonical:    "The deformation  increases rapidly."
-    finding span: "deformation  increases"   -> matches CONTIGUOUSLY, crosses the math
 
-**Consequence for M1:** the sentinel must land *before* the refusal is lifted. See §6.
+### F2 — Discontiguous edits: solved for deletions, still open for replacements
 
-**Fix:** one `U+FFFC OBJECT REPLACEMENT CHARACTER` per math span in canonical text.
-Intersection becomes an ordinary interval test; a reviewer sees a placeholder instead of a
-misleading elision; any proposed span crossing math provably contains the sentinel.
-
-**Cost:** changes canonical text of every math paragraph, hence stored object text and
-derived hashes. Existing ledger findings bound to math paragraphs are invalidated. This also
-means `"math"` should be retired from `paragraph_flags`' lossy reasons
-(`docx_manifest.py:521`, marker emitted at `docx_manifest.py:604`) in the same change, or the
-sentinel and `_LOSSY_MARKER` will assert contradictory things about the same paragraph.
-
-### F2 — Half of all math paragraphs need discontiguous edits
-
-Measured across the four distinct manuscripts in the ArtifactCert working directory
-(`tools/corpus_math_inventory.py`), 231 math-bearing paragraphs:
+Measured across the four distinct manuscripts (`tools/corpus_math_inventory.py`, classifying
+from the shipping projection), 231 math-bearing paragraphs:
 
 | shape | count | share |
 |---|---|---|
-| text on **both** sides of math (a sentence rewrite wants to span it) | 112 | 48.5% |
-| math-only paragraph (display equation, no prose to edit) | 87 | 37.7% |
-| **text on one side only — the clean contiguous case** | **32** | **13.9%** |
+| text on **both** sides of math | 112 | 48.5% |
+| math-only (display equation, no prose to edit) | 87 | 37.7% |
+| text on one side only | 32 | 13.9% |
 
-Hierarchical Jamming alone: 141 math paragraphs -> 61 math-only, 76 sandwiched, **4**
-one-sided.
+**Scope corrected 2026-09-07.** Main already handles the interleaved case for
+**deletion-only** edits, via the disjoint decomposition in section 1. What remains refused is
+a **replacement** that spans a math boundary — `safety.py` states it plainly: *"replacing text
+on BOTH sides would splice around math and remains forbidden."* Insertions and substitutions
+do not use the deletion exception.
 
-`_apply_to_runs(span_start, span_end)` (`docx_patch/engine.py:100`) executes a single
-contiguous span. A "must not intersect math" rule over a contiguous span therefore recovers
-almost nothing on the worst document.
+So the 48.5% is the population *at risk*, not the population currently blocked. The number
+that decides whether generalized holes are worth building is: **of real authorized changes on
+math-bearing paragraphs, how many are replacements spanning a boundary that the deletion-only
+path cannot express?** That is an M1 measurement, not an assumption, and it is the one number
+this plan does not yet have.
 
-**Consequence:** discontiguous extents with immutable holes belong in **M1**, not a later
-phase. The model is not `PREFIX | TARGET | SUFFIX` but:
-
-    PREFIX | ( EDIT, HOLE, EDIT, HOLE, EDIT ) | SUFFIX
-
-where each `HOLE` is a protected math span, byte-stable under C14N, and each `EDIT` is an
-ordinary text extent.
 
 ### F3 — Byte-level containment conflicts with a decision already made
 
@@ -226,58 +241,91 @@ document-wide tracked-changes guard makes that unreachable, so it is not a live 
 MathPatch's own span discovery must descend, not scan direct children, or it will
 under-report protected spans in exactly the documents ArtifactCert emits.
 
-### F6 — ArtifactCert holds two definitions of run text (latent)
+### F6 — Two definitions of run text, in one apply path (latent)
 
-`docx_manifest._para_text` (`docx_manifest.py:468`) extracts a run's text with
-`child.iter(qn("w:t"))` — all `w:t` **descendants**. `docx_patch/safety._run_text`
-(`safety.py:88`) uses `run.findall(qn("t"))` — **direct children only**.
+Still present on `0992741`. `safety._run_text` uses `run.findall(qn("t"))` — direct children —
+and **builds the fragment offsets**. `docx_manifest._para_text` and `engine._apply_to_runs`
+both use `.iter()` — all descendants — and `_apply_to_runs` **consumes those offsets**. So one
+rule measures and a different rule applies, inside a single edit.
 
-Two definitions of one fact, in the two files whose offsets must agree. Measured: they
-agree on **all 12,394 runs** of the reference corpus, so the difference is latent, not
-live. But it is the drift hazard `docx_patch/locator.py`'s docstring exists to prevent,
-sitting unguarded between two modules.
+Demonstrated consequence, on `0992741`, with a `w:t` below an intermediate element inside a
+direct run: the fragment is reported as `[0,15)` while the anchor was located in a 19-character
+space, and the patch produced `'AAA DEEP <<R>> CCCDEEP'` — the nested text duplicated.
 
-MathPatch's projection follows `_para_text` (the anchor space, see F7) and holds that
-rule in exactly one place, inside `project()`'s traversal. A separate `run_text` helper
-was removed during the M0 audit precisely because a second definition of run text
-living inside MathPatch would reproduce this very finding. When the projection is
-integrated, both ArtifactCert call sites should delegate to it, retiring F6.
+**Reachability: not reachable from real documents.** Measured across the corpus: **0 of 21,433
+runs** have `findall` and `.iter()` yielding different text, and in valid OOXML `w:t` is always
+a direct child of `w:r`. (An earlier count of "2,142" here was an artifact of comparing lxml
+proxies by `id()` without holding references — the same defect this project fixed in its own
+gate. Corrected by comparing text instead.)
 
-### F7 — the two coordinate spaces are already skewed, and it mis-targets patches (LIVE)
+So this is a hardening item, not a live defect: one rule should be derived from the other, or
+the shape should fail closed. MathPatch holds the rule in exactly one place, inside
+`project()`'s traversal, and reports the shape as a `nested_run` anomaly. A separate `run_text`
+helper was deleted during the M0 audit precisely because a second definition living inside
+MathPatch would reproduce this finding.
 
-`engine.apply_patches` locates the anchor in `_para_text`'s space:
 
-    text = paragraph_text(p)              # hyperlink text contributes NOTHING
-    span_start = text.index(anchor)
-    verdict = safety.analyze_paragraph(p, span_start, span_end)
+### F7 — RETRACTED (was: a live hyperlink coordinate skew)
 
-but `safety.analyze_paragraph` re-walks the paragraph and, for `w:hyperlink` /
-`w:smartTag`, advances its offset **by that element's text width**
-(`safety.py:197-206`). Every fragment offset after a text-carrying hyperlink is
-therefore shifted by its width relative to the space the anchor was located in.
+**Retracted 2026-09-07. It was already fixed before this project began.** ArtifactCert
+`safety.py:315-323` computes hyperlink/smartTag boundaries in canonical coordinates and carries
+its own record of the bug: *"Advancing offset by the element's text width desynced the fragment
+map from the engine's span whenever such an element PRECEDED the anchor, making edits land on
+the wrong characters (reproduced 2026-08-24: anchor GAMMA edited BETA)."*
 
-Reproduced with ArtifactCert's own code — `tools/probe_offset_skew.py`, two outcomes:
+`tools/probe_offset_skew.py` reproduced the same phenomenon against a diverged tree dated
+2026-08-28. It is kept as a regression probe — pointed at a current tree it should report "F7
+not reproduced" — and as the reason for the reading discipline below.
 
-- **A, false refusal.** 8-char link: the shifted hyperlink interval still overlaps the
-  edit span, so a safe edit is refused as `PATCH_NOT_SAFE_HYPERLINK_INTERSECTS_TARGET`.
-- **B, mis-target.** 4-char link: the shift moves the interval clear of the span, no
-  refusal fires, and the patch overwrites the wrong characters —
-  `'AAA  <<REPLACED>>rget CCC'` where `'AAA  BBB <<REPLACED>> CCC'` was authorized.
+### F8 — Two canonical text streams exist, deliberately
 
-Two paragraphs in the reference corpus have the exposing shape (a text-carrying
-hyperlink followed by editable text). This is a defect in ArtifactCert, not in
-MathPatch, and it is **not** MathPatch's to fix — but it is load-bearing for M1:
+`0992741` has both:
 
-> The sentinel must be emitted by the same walk that advances a consumer's offsets.
-> If `safety.analyze_paragraph` keeps re-walking with its own rules, math offsets will
-> acquire an identical skew the moment they are consumed.
+- `docx_manifest._para_text` — patch coordinates. Direct `w:r/w:t` only; legacy `w:sym` glyphs
+  are structural boundaries, not editable characters. Kept deliberately narrow, and stable, to
+  "preserve already-sealed specifications created before symbol extraction was added".
+- `docx_manifest.review_paragraph_text` — the fuller reviewer-visible stream, including mapped
+  legacy symbols via `word_run_text`/`word_symbol_text` (standard Symbol font only; Wingdings
+  and custom fonts refuse, because "guessing them would silently change scientific content").
 
-That is why the projection follows `_para_text` and not `safety`: `_para_text`'s space
-is the one in which the anchor is located, and therefore the one that decides which
-characters an edit actually overwrites. F7 must be resolved in favour of the
-projection.
+This matters for integration: MathPatch's projection currently extends `_para_text` only. A
+single authoritative traversal must be able to yield **both** streams plus the protected spans,
+or integrating it would just add a third. That materially strengthens the segment-model
+proposal in M1.
 
----
+### F9 — Real-world OMML defect classes are already catalogued
+
+`docx_view.py` has paid for knowledge MathPatch's reader must inherit rather than rediscover:
+
+- Word's upright style (`m:sty="p"`) applies to **letters only**. Wrapping operators in
+  `\mathrm` costs them their relation/binary spacing — on a real manuscript this hit **47 of
+  90 equations** (90 is exactly Hygrochastic v5's span count).
+- Word may legally omit `m:chr` for an n-ary operator, integral being the default; `dwml`
+  assumes it is present and crashes.
+- Accepting a tracked equation edit can leave **empty `m:r` shells**, which `dwml` rejects as
+  an invalid child inside a fraction, refusing the whole equation.
+- Unknown inline wrappers appear inside OMML.
+
+Any Phase-2 OMML reader should start from these four cases.
+
+### Reading the ArtifactCert tree (discipline, learned the hard way)
+
+This plan's findings were wrong three times because they were read off the wrong tree: first a
+**detached HEAD** in the primary checkout (`a95733c`, 2026-08-28, 195 commits diverged), then a
+worktree's **local `main`** without fetching (`c5d3da9`, 2026-09-05, 15 commits stale). The
+repository has many worktrees and the primary checkout is often detached.
+
+Before asserting what ArtifactCert "currently" does:
+
+```
+git -C <artifactcert> fetch --all
+git -C <artifactcert> for-each-ref --sort=-committerdate | head
+git -C <artifactcert> show origin/main:src/artifactcert/<file>
+```
+
+Quote the hash and its date in the claim. `M0_EVIDENCE.json` records both `origin/main` and the
+local checkout's HEAD so any divergence is visible in the record itself.
+
 
 ## 4. Corpus evidence
 
@@ -411,30 +459,85 @@ branches on `paragraph_flags` and asserts total coverage); and the `id()`-based 
 comparison held no strong references to the lxml proxies it compared, which can reuse
 addresses after collection.
 
-### M1 — retire the blanket math refusal (ArtifactCert integration)
+### M0.1 — harden and freeze the seam — **COMPLETE (2026-09-07)**
 
-Ordered, because F1 makes the order load-bearing:
+Everything here came out of an external review plus the M0 self-audit. All defects were
+reproduced before being fixed.
 
-1. `_para_text` delegates to `mathpatch.canonical_text`; record the contract version in the
-   candidate; retire `"math"` from `paragraph_flags` lossy reasons; **migrate/invalidate
-   existing findings bound to math paragraphs.**
-2. Teach `safety.analyze_paragraph` to emit math spans as protected holes rather than
-   refusing at `safety.py:210`.
-3. Extend `_apply_to_runs` to a discontiguous extent with immutable holes (F2).
-4. Add Tier 1 and Tier 2 oracles to `regression.py`.
-5. **Only now** lift `PATCH_NOT_SAFE_MATH_IN_TARGET` to fire solely when an authorized edit
-   extent actually intersects a math span.
+Library:
 
-**Completion checks:**
+- **authored sentinel refused.** `project()` raises `SentinelCollision` when a paragraph's own
+  text contains U+FFFC. Absence from one corpus is not a property of Word documents, and an
+  authored sentinel would make `sentinel_offsets()` disagree with `spans` and corrupt every
+  intersection test.
+- **non-element children handled.** An XML comment or processing instruction has a callable
+  `tag`, so `QName()` raised `ValueError` on it. These reach the projection **by design** —
+  ArtifactCert's `parse_untrusted_xml` sets `remove_comments=False` — and now they are skipped
+  without hiding math inside a wrapper.
+- **nested runs no longer break strict extension.** `_para_text` reaches every `w:t` descendant
+  of a direct `w:r`, so a run nested in a direct run contributes text; it is now included and
+  reported as a `nested_run` anomaly for consumers that would rather fail closed (see F6).
+- **`intersects_math` validates its extent.** `0 <= start <= end <= len(text)`, or `ValueError`.
+  A protection API must reject an impossible range, not answer "no intersection".
 
-- every existing non-math patch test passes unchanged;
-- an authorized text edit wholly outside math spans succeeds, math preserved;
-- an authorized text edit that spans a math span succeeds via holes, math preserved;
-- an edit whose extent intersects a math span still fails closed;
-- all protected spans C14N-identical; all non-target parts payload-identical;
-- patched DOCX opens in Word;
-- `tools/corpus_math_inventory.py` shows a measured reduction in math-related refusals,
-  reported against the F2 breakdown rather than the headline refusal rate.
+Verification apparatus — both scripts were **failing open**:
+
+- `drift_gate.py` printed `M0 GATE: PASSED` with exit 0 while an unreadable input was silently
+  skipped. Unreadable files, parser refusals, and missing `w:body` now fail the gate, and a
+  `SentinelCollision` is reported as a finding rather than a traceback.
+- `c14n_roundtrip_probe.py` skipped unreadable inputs and counted skipped scenarios as neither
+  pass nor fail. Unreadable inputs are now fatal and skips are surfaced in the result.
+
+Record and distribution:
+
+- `M0_EVIDENCE.json` (`tools/make_evidence.py`) binds the claims to the MathPatch commit,
+  ArtifactCert's `origin/main` hash **and date**, the local checkout's HEAD (so divergence is
+  visible), interpreter and lxml versions, and a sha256 + paragraph/span count per corpus
+  document. Manuscripts are recorded by **alias and hash, never filename** — the titles are
+  unpublished and this repository is a shared artifact.
+- GitHub Actions runs the synthetic suite on 3.11/3.12/3.13 and checks the fixture generator is
+  reproducible. CI deliberately does **not** run the gate or probe: those need a real corpus and
+  an importable ArtifactCert, so CI proves internal consistency, not the corpus claims.
+- `LICENSE` added (MIT, as README and `pyproject.toml` already declared).
+- README and this plan no longer describe unimplemented capability as present.
+
+### M1 — protected-math integration (no identity migration)
+
+Rebased against `origin/main` `0992741`. **Deliberately smaller than the previous M1**, which
+proposed changing ArtifactCert's canonical text first.
+
+1. **Enrich `Projection` into a segment model.** Today it exposes only `text` and `spans`, so a
+   consumer must re-walk the paragraph to build its own `RunFragment` map — which is exactly the
+   duplicate-coordinate problem of F6, reintroduced at the seam. Target shape:
+
+   ```
+   Projection
+     ├─ text                     (patch-coordinate stream, = _para_text)
+     ├─ review_text              (reviewer stream, incl. mapped symbols — F8)
+     ├─ text_segments[]          element, start, end
+     └─ protected_spans[]        element, start, end, kind, digest
+   ```
+
+   One traversal, several projections. This is the single most valuable piece of the milestone:
+   it lets ArtifactCert's analyzer and writer consume one authoritative model, and it retires
+   F6 and F8 as a side effect instead of adding a third stream.
+
+2. **Add protected-span verification to the existing patch path.** ArtifactCert calls MathPatch
+   to inventory math spans in the already-located paragraph, digests them before and after an
+   ordinary patch, and requires equality. This closes the count-vs-content gap of section 1(1)
+   and makes `safety.py`'s "the regression report still proves that its XML stayed put" true.
+   It changes no coordinate space and no stored identity.
+
+3. **Collapse the remaining duplicate run/offset computations** so MathPatch and ArtifactCert
+   cannot drift (F6).
+
+4. **Measure what is still refused.** Specifically: of real authorized changes on math-bearing
+   paragraphs, how many are *replacements* spanning a math boundary that the deletion-only
+   decomposition cannot express (F2)? Only that number decides whether generalized holes are
+   worth building. Do not build them first.
+
+Not in M1: the sentinel in persisted text, a new address space (F4), generalized holes.
+
 
 ### M2 — first native equation patch
 
@@ -454,16 +557,31 @@ structures scientific manuscripts need.
 
 ---
 
-## 7. Canonical representation
+## 7. Canonical representation — and two different writers
 
-    OMML -> Math AST -> modify AST -> OMML          (trusted path)
-    OMML -> LaTeX -> OMML                            (never; lossy)
-    LaTeX -> parser -> Math AST -> OMML              (input adapter only)
+    OMML -> source-preserving AST -> mutate smallest node -> OMML   (patch an existing equation)
+    LaTeX -> parser -> Math AST -> OMML                             (construct a new equation)
+    OMML -> LaTeX -> OMML                                           (never; lossy)
 
-LaTeX is how a review finding or a newly authored equation arrives. It is internal
-machinery, not the product, and never the representation of an existing Word equation.
+**Revised 2026-09-07.** An earlier version said simply `OMML -> Math AST -> modify -> OMML`.
+That invites a writer that *regenerates* the equation subtree — preserving mathematical
+structure while quietly changing run properties, control properties, spacing, fonts, and unknown
+extension nodes. Regenerating is precisely what this project exists not to do.
 
----
+So there are two writers, and only one of them touches existing equations:
+
+- **Patch an existing equation.** The AST retains **source provenance** — every node knows which
+  OMML element it came from. Changing `E_f` to `E_m` mutates one existing `m:t`, not a freshly
+  serialized `m:oMath`. Minimum disturbance, verified by C14N digest of everything else in the
+  span.
+- **Construct a new equation.** Full AST → OMML generation, used only where no source subtree
+  exists.
+
+LaTeX is an input adapter for review findings and newly authored equations. It is never the
+representation of an existing Word equation: `OMML -> LaTeX` is lossy, and ArtifactCert already
+gets that direction from `dwml` for display (F9), so competing on conversion would be pure
+duplication.
+
 
 ## 8. Non-goals
 

@@ -32,4 +32,7 @@ echo "   (all .docx: tracked-changes derivatives double-count. PLAN.md section 4
 echo "    the four DISTINCT manuscripts -- read the per-file rows, not the total.)"
 "$PY" tools/corpus_math_inventory.py "$AC_DIR"/*.docx
 
+echo; echo "== evidence record =="
+"$PY" tools/make_evidence.py || echo "  (evidence record needs ARTIFACTCERT_SRC)"
+
 echo; echo "M0 verification complete."
