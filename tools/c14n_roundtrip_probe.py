@@ -15,6 +15,9 @@ Three scenarios, increasingly close to the real M1 operation:
   S2 mutate a MATH-FREE paragraph's run text, then reserialize   (a today-legal patch)
   S3 mutate text in a paragraph that CONTAINS math               (the M1 operation)
 
+Digest parameters come from `mathpatch.digest.C14N_KWARGS` so this probe tests the
+configuration that actually ships.
+
 For each, every outermost math span is digested before and after and compared under
 both bases. Exit code is nonzero if C14N is unstable anywhere.
 
@@ -27,8 +30,12 @@ import hashlib
 import os
 import sys
 import zipfile
+from pathlib import Path
 
 from lxml import etree
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+from mathpatch.digest import C14N_KWARGS  # noqa: E402  the config that actually ships
 
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 M = "http://schemas.openxmlformats.org/officeDocument/2006/math"
@@ -56,7 +63,13 @@ def raw_digest(el: etree._Element) -> str:
 
 
 def c14n_digest(el: etree._Element) -> str:
-    return hashlib.sha256(etree.tostring(el, method="c14n")).hexdigest()
+    """Uses mathpatch.digest.C14N_KWARGS, not a local default.
+
+    An earlier version of this probe hard-coded inclusive C14N while digest.py ships
+    exclusive + with_comments, so re-running the probe did not exercise the shipping
+    configuration. A probe must watch the artifact that ships.
+    """
+    return hashlib.sha256(etree.tostring(el, method="c14n", **C14N_KWARGS)).hexdigest()
 
 
 def digests(root: etree._Element) -> tuple[list[str], list[str]]:

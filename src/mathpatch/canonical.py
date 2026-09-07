@@ -41,7 +41,6 @@ from .spans import (
     SENTINEL,
     ProtectedMathSpan,
     local_name,
-    outermost_math,
     qn,
 )
 
@@ -62,20 +61,21 @@ class Projection:
         return tuple(i for i, ch in enumerate(self.text) if ch == SENTINEL)
 
 
-def run_text(run: etree._Element) -> str:
-    """Text of one `w:r`, by `_para_text`'s rule: all `w:t` descendants.
-
-    ArtifactCert holds two definitions of this: `docx_manifest._para_text` uses
-    `.iter()` (descendants) and `docx_patch/safety._run_text` uses `.findall()`
-    (direct children only). They agree on all 12,394 runs of the reference corpus,
-    so the difference is latent, but it is two definitions of one fact (PLAN.md F6).
-    This follows `_para_text`, the anchor space.
-    """
-    return "".join(t.text or "" for t in run.iter(qn("t")))
-
-
 def project(p: etree._Element) -> Projection:
-    """Project one `w:p` to canonical text plus positioned math spans."""
+    """Project one `w:p` to canonical text plus positioned math spans.
+
+    One traversal in document order emits both, so text and offsets cannot disagree.
+
+    Discovery is TOTAL: every math element in the paragraph is either a span or a
+    descendant of one (`tests/test_canonical.py::test_every_math_element_is_covered`).
+    An unseen span is an unprotected span, so under-reporting is the dangerous
+    direction -- including for the schema-unusual case of math inside a `w:r`, which
+    does not occur in the reference corpus but is not thereby impossible.
+
+    Text emission reproduces `_para_text` exactly: a `w:t` contributes only when its
+    run is a DIRECT child of the paragraph, at any depth within that run (`_para_text`
+    uses `.iter()`, so a deeply nested `w:t` counts -- see F6).
+    """
     parts: list[str] = []
     spans: list[ProtectedMathSpan] = []
     offset = 0
@@ -97,20 +97,30 @@ def project(p: etree._Element) -> Projection:
         offset += 1
         ordinal += 1
 
-    for child in p:
-        if child.tag == qn("r"):
-            text = run_text(child)
+    def emit_text(text: str) -> None:
+        nonlocal offset
+        if text:
             parts.append(text)
             offset += len(text)
-        elif child.tag in MATH_TAGS:
-            emit_span(child, None)
-        else:
-            # Any other direct child contributes no canonical text (matching
-            # _para_text), but may still contain math that must be positioned.
-            wrapper = local_name(child)
-            for math_el in outermost_math(child):
-                emit_span(math_el, wrapper)
 
+    def walk(el: etree._Element, wrapper: str | None, in_direct_run: bool) -> None:
+        for child in el:
+            tag = child.tag
+            if tag in MATH_TAGS:
+                # Outermost-only: never descend into a match.
+                emit_span(child, wrapper)
+            elif tag == qn("r"):
+                direct = el is p
+                walk(child, wrapper if wrapper is not None else ("r" if direct else None), direct)
+            elif tag == qn("t"):
+                if in_direct_run:
+                    emit_text(child.text or "")
+            else:
+                # Contributes no canonical text of its own (matching _para_text), but
+                # may contain math, or a nested w:t belonging to an enclosing run.
+                walk(child, wrapper if wrapper is not None else local_name(child), in_direct_run)
+
+    walk(p, None, False)
     return Projection(text="".join(parts), spans=tuple(spans))
 
 

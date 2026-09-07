@@ -16,7 +16,6 @@ from .canonical import (
     intersects_math,
     math_spans,
     project,
-    run_text,
 )
 from .digest import C14N_KWARGS, c14n_bytes, digest, span_digest, span_digests
 from .spans import (
@@ -55,7 +54,6 @@ __all__ = [
     "outermost_math",
     "project",
     "qn",
-    "run_text",
     "span_digest",
     "span_digests",
 ]

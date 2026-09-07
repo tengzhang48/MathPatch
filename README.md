@@ -41,7 +41,8 @@ as its math capability, while remaining usable on its own.
 ## Status
 
 M0 complete — the canonical projection, span discovery, and C14N digests are implemented and
-gated against a real corpus (3,598 paragraphs, 851 math spans, zero drift). See
+gated against a real corpus (4,654 paragraphs, 1,175 math spans, zero drift); run
+`tools/verify_m0.sh` to reproduce every claim. See
 **[PLAN.md](PLAN.md)** for the design, the milestones, and the
 findings from real manuscripts and real integration code that shape them.
 

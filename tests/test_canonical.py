@@ -122,3 +122,67 @@ class TestIntersection:
     def test_edit_spanning_the_whole_paragraph_intersects(self):
         """The 48.5% case: a sentence rewrite that spans the math. Needs holes."""
         assert len(intersects_math(self.p, 0, 7)) == 1
+
+
+class TestTotalDiscovery:
+    """Discovery must be total: an unseen span is an unprotected span."""
+
+    def test_math_inside_a_run_is_discovered(self):
+        """Schema-unusual and absent from the reference corpus (audit B: 0 of 4,645
+        paragraphs), but absent is not impossible, and missing it is the dangerous
+        direction."""
+        p = para(f"<w:r><w:t>a</w:t>{omath()}<w:t>b</w:t></w:r>")
+        text = canonical_text(p)
+        assert text == f"a{SENTINEL}b"
+        (span,) = math_spans(p)
+        assert span.wrapper == "r" and span.is_nested
+        assert text[span.start] == SENTINEL
+
+    def test_every_math_element_is_covered(self):
+        """Partition invariant: each math element is a span or inside one -- never
+        both missed and never double-counted."""
+        from mathpatch import MATH_TAGS
+
+        p = para(
+            run("a") + omath() + f"<w:ins>{omathpara()}</w:ins>"
+            + f"<w:r><w:t>b</w:t>{omath()}</w:r>" + run("c")
+        )
+        spans = math_spans(p)
+        # strong references held for the lifetime of the comparison: id() on a
+        # collected lxml proxy can be reused for a different node
+        covered_els = [d for s in spans for d in s.element.iter()]
+        all_els = list(p.iter())
+        covered = {id(d) for d in covered_els}
+        all_math = [el for el in all_els if el.tag in MATH_TAGS]
+        assert all_math, "fixture must contain math"
+        assert all(id(el) in covered for el in all_math)
+        # oMathPara + its inner oMath = 4 elements, but only 3 spans
+        assert len(all_math) == 4 and len(spans) == 3
+
+    def test_deeply_nested_w_t_in_a_direct_run_is_included(self):
+        """_para_text uses .iter(), so a w:t below an intermediate element still
+        counts. safety._run_text uses .findall() and would drop it -- that is F6."""
+        p = para("<w:r><w:t>x</w:t><w:smartTag><w:t>deep</w:t></w:smartTag></w:r>")
+        assert canonical_text(p) == "xdeep"
+
+    def test_text_inside_a_revision_wrapper_stays_excluded(self):
+        """A w:ins is not a direct w:r child, so _para_text omits its text and so
+        must the projection."""
+        p = para(run("keep") + f"<w:ins>{run('dropped')}</w:ins>" + run("keep2"))
+        assert canonical_text(p) == "keepkeep2"
+
+
+def test_outermost_math_agrees_with_the_projection():
+    """spans.outermost_math and project()'s traversal both implement "outermost".
+    Two definitions of one fact is the F6 hazard, so it is guarded here rather than
+    left to drift."""
+    from mathpatch import outermost_math
+
+    p = para(
+        run("a") + omath() + f"<w:ins>{omathpara()}</w:ins>"
+        + f"<w:r><w:t>b</w:t>{omath()}</w:r>" + run("c") + omathpara()
+    )
+    from_helper = list(outermost_math(p))
+    from_projection = [s.element for s in math_spans(p)]
+    assert len(from_helper) == len(from_projection) == 4
+    assert all(a is b for a, b in zip(from_helper, from_projection))

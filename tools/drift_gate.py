@@ -47,10 +47,20 @@ def _load_artifactcert(src: str | None):
     for cand in candidates:
         if cand and (Path(cand) / "artifactcert" / "docx_manifest.py").is_file():
             sys.path.insert(0, cand)
-            from artifactcert.docx_manifest import enumerate_paragraphs, paragraph_text
+            from artifactcert.docx_manifest import (
+                enumerate_paragraphs,
+                paragraph_flags,
+                paragraph_text,
+            )
             from artifactcert.opc_xml import parse_untrusted_xml
 
-            return enumerate_paragraphs, paragraph_text, parse_untrusted_xml, cand
+            return (
+                enumerate_paragraphs,
+                paragraph_text,
+                paragraph_flags,
+                parse_untrusted_xml,
+                cand,
+            )
     raise SystemExit(
         "cannot locate ArtifactCert's src/ -- pass --artifactcert-src or set ARTIFACTCERT_SRC"
     )
@@ -66,8 +76,14 @@ def main(argv: list[str]) -> int:
         print(__doc__)
         return 2
 
-    enumerate_paragraphs, paragraph_text, parse_untrusted_xml, resolved = _load_artifactcert(src)
-    from mathpatch import CANONICAL_TEXT_CONTRACT_VERSION, SENTINEL, project
+    (
+        enumerate_paragraphs,
+        paragraph_text,
+        paragraph_flags,
+        parse_untrusted_xml,
+        resolved,
+    ) = _load_artifactcert(src)
+    from mathpatch import CANONICAL_TEXT_CONTRACT_VERSION, MATH_TAGS, SENTINEL, project
 
     W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
     print(f"artifactcert src : {resolved}")
@@ -97,7 +113,20 @@ def main(argv: list[str]) -> int:
             proj = project(p)
             stats["paras"] += 1
 
-            if not proj.spans:
+            # Branch on ArtifactCert's INDEPENDENT math detection, not on our own
+            # span count. Branching on proj.spans would let a discovery bug
+            # reclassify a math paragraph as math-free and pass silently: the gate
+            # must be able to falsify the error it certifies.
+            ac_has_math = "math" in paragraph_flags(p)
+            if ac_has_math != bool(proj.spans):
+                stats["fail"] += 1
+                failures.append(
+                    f"{os.path.basename(path)} {loc}: detection disagreement -- "
+                    f"artifactcert says math={ac_has_math}, mathpatch found "
+                    f"{len(proj.spans)} span(s)"
+                )
+
+            if not ac_has_math:
                 stats["mathfree"] += 1
                 if proj.text != ac:
                     stats["fail"] += 1
@@ -122,6 +151,21 @@ def main(argv: list[str]) -> int:
                     f"{os.path.basename(path)} {loc}: {len(proj.spans)} spans but "
                     f"{proj.text.count(SENTINEL)} sentinels"
                 )
+            # Hold strong references while comparing: id() on a collected lxml
+            # proxy can be reused by a new proxy for a different node.
+            covered_els = [d for s in proj.spans for d in s.element.iter()]
+            all_els = list(p.iter())
+            covered = {id(d) for d in covered_els}
+            uncovered = [
+                el for el in all_els if el.tag in MATH_TAGS and id(el) not in covered
+            ]
+            if uncovered:
+                stats["fail"] += 1
+                failures.append(
+                    f"{os.path.basename(path)} {loc}: {len(uncovered)} math element(s) "
+                    "neither a span nor inside one -- discovery is not total"
+                )
+
             for span in proj.spans:
                 if proj.text[span.start : span.end] != SENTINEL:
                     stats["fail"] += 1

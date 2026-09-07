@@ -237,9 +237,11 @@ agree on **all 12,394 runs** of the reference corpus, so the difference is laten
 live. But it is the drift hazard `docx_patch/locator.py`'s docstring exists to prevent,
 sitting unguarded between two modules.
 
-MathPatch's `run_text` follows `_para_text` (the anchor space, see F7). When the
-projection is integrated, both call sites should delegate to it, which retires F6 as a
-side effect — the integration collapses two definitions into one.
+MathPatch's projection follows `_para_text` (the anchor space, see F7) and holds that
+rule in exactly one place, inside `project()`'s traversal. A separate `run_text` helper
+was removed during the M0 audit precisely because a second definition of run text
+living inside MathPatch would reproduce this very finding. When the projection is
+integrated, both ArtifactCert call sites should delegate to it, retiring F6.
 
 ### F7 — the two coordinate spaces are already skewed, and it mis-targets patches (LIVE)
 
@@ -295,7 +297,9 @@ correctly out of scope.
 *recoverable* rate. See F2 — recoverable is much smaller until holes exist.
 
 `tools/corpus_math_inventory.py` regenerates both tables and is the baseline for the M1
-recovery metric.
+recovery metric. Since the M0 audit it classifies shapes from `mathpatch.project`'s
+canonical text rather than a local reimplementation, so the numbers driving the M1
+scope decision are covered by the library's own tests and drift gate.
 
 ---
 
@@ -350,20 +354,62 @@ Deliver, against synthetic fixtures plus the real corpus, read-only:
 `mathpatch.canonical_text(p) == artifactcert._para_text(p)`; for every math paragraph, the
 projections differ in exactly the sentinel positions and nowhere else. Zero exceptions.
 
-**STATUS: M0 COMPLETE (2026-09-07).** `tools/drift_gate.py`, run over six documents
-(the four distinct manuscripts plus two tracked-changes derivatives, which exercise the
-`w:ins` nesting path of F5):
+**STATUS: M0 COMPLETE (2026-09-07).** `tools/drift_gate.py` over the seven reference
+manuscripts plus `tests/fixtures/descent.docx`:
 
-    paras=3598   math-free=3207   math-bearing=391   spans=851   FAIL=0
+    paras=4654   math-free=4115   math-bearing=539   spans=1175   FAIL=0
 
 `tools/c14n_roundtrip_probe.py` settled Tier 2 before any of it was written: C14N
 digests of untouched math subtrees survive a parse -> mutate -> reserialize -> reparse
-round trip on all 499 spans of the four manuscripts, in all three scenarios including
-the actual M1 operation (editing text in a math-bearing paragraph). All four candidate
-parameter sets were stable, so the choice rests on purpose — see `digest.py`.
+round trip on every span of the four distinct manuscripts, in all three scenarios
+including the actual M1 operation (editing text in a math-bearing paragraph). All four
+candidate parameter sets were stable, so the choice rests on purpose (see `digest.py`).
 
-27 unit tests cover the fixture matrix of section 9. Two findings were added to this
-plan during M0: F6 and F7.
+32 unit tests cover the fixture matrix of section 9. `tools/verify_m0.sh` reproduces
+every claim above in one command. Two findings were added to this plan during M0: F6
+and F7.
+
+### M0 self-audit: what the gate does and does not certify
+
+The gate's coverage is bounded by its corpus, so the corpus was measured rather than
+assumed. Six checks; four held, two did not.
+
+Held:
+
+- **no sentinel collision.** U+FFFC does not occur anywhere in the corpus, so a
+  sentinel can never be confused with authored text.
+- **enumerator coverage is complete.** ArtifactCert's `enumerate_paragraphs` reaches
+  every one of the 4,645 `w:p` elements in the corpus, and no math sits in an
+  unenumerated paragraph.
+- **detection agrees with an independent oracle.** ArtifactCert's `paragraph_flags`
+  "math" flag and this projection's span discovery disagree on 0 of 4,645 paragraphs.
+- **the tests can fail.** Six independent mutations of the traversal (double-count,
+  dropped descent, text/offset desync, wrong intersection bound, unguarded text
+  emission, wrong directness test) each produce 3-4 test failures. The gate itself
+  fails on a dropped sentinel (141 failures) and on leaked text (268).
+
+Did not hold, now corrected:
+
+- **CORRECTION.** An earlier version of this section claimed the tracked-changes
+  documents "exercise the `w:ins` nesting path of F5". They do not. All **1,167**
+  corpus spans are direct children of `w:p`; **zero** sit in any wrapper. The claim was
+  inferred from the documents containing `w:ins` at all, without checking whether any
+  `w:ins` contains math. Consequence: a regression that dropped wrapper descent
+  entirely **passed the gate unnoticed**. `tests/fixtures/descent.docx` now supplies
+  the missing shapes (math in `w:ins`, in `w:hyperlink`, in `w:r`), and that same
+  mutation now fails the gate with 5 failures. Descent over *real* documents remains
+  **unverified**: no reference manuscript contains the shape.
+- **the probe was watching the wrong artifact.** `c14n_roundtrip_probe.py` hard-coded
+  inclusive C14N while `digest.py` ships exclusive + comments, so re-running the
+  committed probe did not exercise the shipping configuration. It now imports
+  `C14N_KWARGS`. The conclusion itself stood -- the shipping parameters were covered by
+  a one-off variant comparison -- but the committed probe did not test them.
+
+Two smaller repairs from the same audit: the gate branched on its own span count, so a
+discovery bug would have been reclassified as "math-free" and passed silently (it now
+branches on `paragraph_flags` and asserts total coverage); and the `id()`-based coverage
+comparison held no strong references to the lxml proxies it compared, which can reuse
+addresses after collection.
 
 ### M1 — retire the blanket math refusal (ArtifactCert integration)
 
@@ -464,7 +510,9 @@ payload hashes, protected-span C14N digests, ArtifactCert binding re-verificatio
         c14n_roundtrip_probe.py    # settles section 5 Tier 2 before relying on it
         drift_gate.py              # the M0 gate: strict extension of _para_text
         probe_offset_skew.py       # reproduces F7 against ArtifactCert's own code
+        make_fixture_docx.py       # shapes the real corpus lacks (wrapper-nested math)
+        verify_m0.sh               # one command: tests + fixture + probe + gate
     tests/
-        fixtures/
+        fixtures/descent.docx   # generated; the only source of wrapper-nested math
 
 Module split follows implementation pressure; do not create files speculatively.

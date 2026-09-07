@@ -16,9 +16,11 @@ Two tables, both baselines for MathPatch milestones (see PLAN.md):
 The "with math" percentage in Table 1 is the REFUSAL rate under
 artifactcert/docx_patch/safety.py:210. It is not the recoverable rate. Table 2 is.
 
-Coordinate note: this mirrors artifactcert.docx_manifest._para_text by counting only
-DIRECT w:r children of w:p as editable text, which is the coordinate space
-docx_patch/safety.py RunFragment offsets live in.
+Coordinate note: shapes are classified from mathpatch.project()'s canonical text, the
+same projection the library ships and the drift gate certifies as a strict extension of
+artifactcert.docx_manifest._para_text. Earlier revisions of this tool reimplemented the
+walk locally, which meant the F2 numbers driving the M1 scope decision were not covered
+by the library's tests.
 
 Usage:
     corpus_math_inventory.py [file.docx ...]
@@ -31,8 +33,12 @@ import glob
 import os
 import sys
 import zipfile
+from pathlib import Path
 
 from lxml import etree
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+from mathpatch import SENTINEL, project  # noqa: E402  the shipping projection
 
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 M = "http://schemas.openxmlformats.org/officeDocument/2006/math"
@@ -46,8 +52,21 @@ def qn(local: str) -> str:
     return f"{{{W}}}{local}"
 
 
-def run_text(r: etree._Element) -> str:
-    return "".join(t.text or "" for t in r.iter(qn("t")))
+def parse_hardened(xml: bytes) -> etree._Element:
+    """Parse without DTD/entity/network capability, refusing a DOCTYPE.
+
+    Same rationale as ArtifactCert's `opc_xml.parse_untrusted_xml`: entity expansion
+    would make the parsed evidence differ from the bytes actually in the package.
+    Duplicated rather than imported so this tool needs no artifactcert dependency.
+    """
+    parser = etree.XMLParser(
+        resolve_entities=False, load_dtd=False, no_network=True,
+        recover=False, huge_tree=False,
+    )
+    root = etree.fromstring(xml, parser=parser)
+    if root.getroottree().docinfo.doctype:
+        raise ValueError("refused: document.xml declares a DOCTYPE")
+    return root
 
 
 def has_math(p: etree._Element) -> bool:
@@ -55,26 +74,22 @@ def has_math(p: etree._Element) -> bool:
 
 
 def para_shape(p: etree._Element) -> str | None:
-    """'both' | 'before' | 'after' | 'mathonly', or None if no math at this level.
+    """'both' | 'before' | 'after' | 'mathonly', or None if the paragraph has no math.
 
-    Math is discovered by DESCENT (finding F5): a span nested in w:ins/w:hyperlink is
-    still a protected span. Text/math ordering is taken from direct children, which is
-    the editable coordinate space.
+    Classification is derived from `mathpatch.project`'s canonical text -- the shipping
+    projection, not a parallel reimplementation -- so these numbers are certified by
+    the same tests and drift gate as the library. "Text before/after" means text in the
+    coordinate space an edit actually operates in, which is what the F2 question is
+    really asking.
     """
-    seq: list[str] = []
-    for k in p:
-        if k.tag == qn("r"):
-            if run_text(k).strip():
-                seq.append("T")
-        elif k.tag in MATH_TAGS:
-            seq.append("M")
-        elif any(el.tag in MATH_TAGS for el in k.iter()):
-            seq.append("M")  # math nested inside a wrapper (revision, hyperlink, sdt)
-    s = "".join(seq)
-    if "M" not in s:
+    proj = project(p)
+    if not proj.spans:
         return None
-    first, last = s.find("M"), s.rfind("M")
-    before, after = "T" in s[:first], "T" in s[last + 1:]
+    text = proj.text
+    first = proj.spans[0].start
+    last = proj.spans[-1].end
+    before = bool(text[:first].strip())
+    after = bool(text[last:].strip())
     if before and after:
         return "both"
     if before:
@@ -88,12 +103,12 @@ def inspect(path: str) -> dict | None:
     try:
         with zipfile.ZipFile(path) as z:
             raw = z.read("word/document.xml")
-    except (zipfile.BadZipFile, KeyError, OSError) as exc:
+    except (zipfile.BadZipFile, KeyError, OSError, ValueError) as exc:
         print(f"  !! {os.path.basename(path)}: unreadable ({exc})", file=sys.stderr)
         return None
 
     text = raw.decode("utf-8", "replace")
-    root = etree.fromstring(raw)
+    root = parse_hardened(raw)
 
     rec = {
         "name": os.path.basename(path),
@@ -109,12 +124,12 @@ def inspect(path: str) -> dict | None:
     }
 
     for p in root.iter(qn("p")):
-        body_text = "".join(run_text(r) for r in p if r.tag == qn("r")).strip()
-        m = has_math(p)
-        if not body_text and not m:
+        proj = project(p)
+        body_text = proj.text.replace(SENTINEL, "").strip()
+        if not body_text and not proj.spans:
             continue
         rec["paras"] += 1
-        if not m:
+        if not proj.spans:
             continue
         rec["math_paras"] += 1
         shape = para_shape(p)
