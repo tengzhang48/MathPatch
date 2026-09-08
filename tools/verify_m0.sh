@@ -66,6 +66,16 @@ echo "   (all .docx: tracked-changes derivatives double-count. PLAN.md section 4
 echo "    the four DISTINCT manuscripts -- read the per-file rows, not the total.)"
 "$PY" tools/corpus_math_inventory.py "$AC_DIR"/*.docx
 
+echo; echo "== oracle acceptance against real authorized patches =="
+if [ -n "${ARTIFACTCERT_LEDGERS:-}" ]; then
+  ARTIFACTCERT_SRC="$AC_SRC" MATHPATCH_FIXTURE=tests/fixtures/descent.docx \
+    "$AC_PY" tools/oracle_acceptance.py $ARTIFACTCERT_LEDGERS
+else
+  echo "   SKIPPED -- set ARTIFACTCERT_LEDGERS to a space-separated list of ledger paths."
+  echo "   This is the only check that exercises the oracle against REAL patches; a run"
+  echo "   without it does not certify M1 item 2."
+fi
+
 echo; echo "== evidence record =="
 ARTIFACTCERT_SRC="$AC_SRC" ARTIFACTCERT_DIR="$AC_DIR" "$PY" tools/make_evidence.py
 

@@ -1,4 +1,4 @@
-0992741068cd3f0806d3ff63958a43a84a38bd32
+b330bf8fd109da5289e284b577f37a9b1f8a2ae3
 # ArtifactCert commit this milestone is verified against.
 #
 # Every claim in PLAN.md about what ArtifactCert "currently" does refers to THIS
@@ -12,3 +12,9 @@
 #
 # To advance the target: fetch, read the new tree, re-derive the findings in PLAN.md
 # section 3, then update this hash in the same commit.
+#
+# Advanced 2026-09-08 from 0992741 to b330bf8. No re-derivation was needed: the four
+# intervening commits touch only UI, docs and tests, and every file MathPatch depends on
+# is byte-identical between the two revisions --
+#   docx_patch/safety.py  docx_patch/engine.py  docx_manifest.py  opc_xml.py
+# verified with `git rev-parse <rev>:<path>` on each.

@@ -1,9 +1,9 @@
 # MathPatch — Plan
 
 **Status:** M0, M0.1 and M1 item 1 (`ParagraphProjection`) complete. Verified against the
-**pinned** ArtifactCert commit `0992741` (2026-09-07), named in `INTEGRATION_TARGET.txt`.
-`origin/main` has since moved on — `b330bf8` as of 2026-09-08 — and the pin is deliberate: every
-claim here refers to `0992741` and nothing else. See the reading discipline in section 3.
+**pinned** ArtifactCert commit `b330bf8` (2026-09-08), named in `INTEGRATION_TARGET.txt`.
+The pin was advanced from `0992741` on 2026-09-08 after verifying the integration surface is
+byte-identical between the two. See the reading discipline in section 3.
 **Relationship to ArtifactCert:** MathPatch is developed as an independent package and
 integrated into ArtifactCert afterwards. It is not a fork, not a plugin, and it never
 becomes an authority over document identity.
@@ -445,6 +445,44 @@ fixed rather than documented away.
 Comments and property elements consume no structural index either, so adding one cannot move an
 identity. The gate now checks structural paths are unique per span and the same depth as the raw
 path; making them collide yields FAIL=10 on one manuscript.
+
+### F15 — Editing a run that contains an inline equation RELOCATES the equation
+
+Found by running the oracle against real patches (M1 item 2's acceptance test). This is a
+defect in ArtifactCert at the pinned commit, not in MathPatch, and the oracle catching it is
+the clearest justification the oracle has.
+
+    BEFORE run children: ["t('in-run ')", 'oMath', "t('tail')"]     boundary (7,)
+    safety.analyze_paragraph(p, 0, 6): ok=True
+    AFTER  run children: ["t('IN-RUN EDITED tail')", 'oMath']       boundary (18,)
+
+Three things line up:
+
+1. `safety.analyze_paragraph` scans the paragraph's **direct children** for `_MATH_TAGS`, so an
+   `m:oMath` inside a `w:r` is invisible to it and the edit is not refused.
+2. `_apply_to_runs` reads the run's text with `.iter(qn_w("t"))`, which spans the equation,
+   rewrites the whole thing into the first `w:t`, and removes the rest.
+3. The equation therefore ends up after all of the run's text — moved from mid-sentence to the
+   end of the paragraph.
+
+And nothing existing detects it: the engine's conformance check compares canonical text, in which
+math is **zero width**, so it passes. The regression report's `oMath` count is unchanged too. The
+defect is invisible to every current proof **by construction**.
+
+MathPatch's boundary half catches it — predicted 14, observed 18 — while the identity half cannot,
+because `structural_path` skips `w:t` and so reads the same before and after. That is exactly why
+the oracle has two halves (F12), and it is the first time the two-part design has paid for itself
+on something neither half alone would find.
+
+**Reachability: latent.** The shape (math inside a `w:r`) occurs 0 times in 4,645 real paragraphs
+across 7 manuscripts, so no real edit has hit it. It is reported for the record, not as an
+emergency, and `tests/fixtures/descent.docx` `body/p/4` keeps it exercised: the acceptance test
+lists a boundary mismatch there as the EXPECTED outcome, so the day it stops mismatching is the
+day someone fixed it.
+
+Suggested fix on the ArtifactCert side, if it is ever wanted: have safety detect math anywhere
+below a candidate run, not just among the paragraph's direct children — the same descent-versus-
+scan point as F5.
 
 ### Reading the ArtifactCert tree (discipline, learned the hard way)
 
@@ -1075,6 +1113,7 @@ payload hashes, protected-span C14N digests, ArtifactCert binding re-verificatio
         test_local.sh              # CI-equivalent; needs only this repo
         make_evidence.py           # M0_EVIDENCE.json, fails closed on the pin
         measure_math_refusals.py   # answered M1 item 4: 0 of 364
+        oracle_acceptance.py       # M1 item 2 acceptance: 44/44 real, F15 found
     tests/
         fixtures/descent.docx   # generated; the only source of wrapper-nested math
 
