@@ -108,6 +108,7 @@ class MathSegment:
 
     source_element: etree._Element
     source_path: tuple[int, ...]
+    structural_path: tuple[int, ...]
     patch_boundary: int
     sentinel_start: int
     sentinel_end: int

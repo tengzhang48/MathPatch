@@ -417,6 +417,35 @@ accepted extents outside the paragraph and overlapping edit sets, returning plau
 impossible inputs. It now takes the BEFORE `ParagraphProjection` rather than bare spans, so it
 can validate extents against the real paragraph length, and it refuses overlapping edits.
 
+### F14 — The raw index path is not stable under a legitimate edit
+
+`math_identity` originally compared `source_path`, the element's raw index path within the
+paragraph. That is not invariant under an authorized text edit.
+
+`engine._rewrite_run_text` collapses a run's several `w:t` elements into one (and adds one to a
+run that had none). Everything after them *inside that run* shifts index. Reproduced against the
+pin, editing the text of a run that also contains an equation:
+
+    source_path      (0, 2)  ->  (0, 1)
+    paragraph_identity            NOT stable  -- false positive
+
+Same failure mode as F12, one level down: an ordinary edit that moves nothing would have been
+reported as an equation moving. The shape (math inside a `w:r`) occurs 0 times in 4,645 real
+paragraphs, but an oracle that *can* false-positive is exactly what F12 was about, so it is
+fixed rather than documented away.
+
+`MathSegment` now carries two paths with two jobs:
+
+- **`source_path`** — raw indices. It **locates**: following it from the paragraph reaches
+  exactly this element. Invariant 11 tests that.
+- **`structural_path`** — indices counting only structural siblings, skipping `w:t` and property
+  elements. It is what **identity** compares. Under the collapse above it stays `(0, 0)`, while
+  a genuine move still shifts it — `(1,)` to `(2,)` for `A [eq] B` becoming `A B [eq]`.
+
+Comments and property elements consume no structural index either, so adding one cannot move an
+identity. The gate now checks structural paths are unique per span and the same depth as the raw
+path; making them collide yields FAIL=10 on one manuscript.
+
 ### Reading the ArtifactCert tree (discipline, learned the hard way)
 
 This plan's findings were wrong three times because they were read off the wrong tree: first a
@@ -694,8 +723,8 @@ proposed changing ArtifactCert's canonical text first.
    boundary, where three integers are genuinely ambiguous (F13); ArtifactCert can derive it from
    the host its insertion logic already chose, via `affinity_from_host`.
 
-   The first is equality of `(kind, ordinal, source_path, c14n_digest)` per span and is invariant
-   under prose edits. The second predicts where each zero-width boundary must land. Requiring
+   The first is equality of `(kind, ordinal, structural_path, c14n_digest)` per span and is
+   invariant under prose edits, including a `w:t` collapse (F14). The second predicts where each zero-width boundary must land. Requiring
    `patch_boundary` equality instead would refuse correct patches — see F12, which is why the
    oracle is shaped this way.
 
@@ -827,11 +856,16 @@ TextPiece                                # which w:t owns which characters
 
 MathSegment
     source_element  : m:oMath | m:oMathPara   # OUTERMOST only
-    source_path     : tuple[int, ...]
+    source_path     : tuple[int, ...]    # raw indices; LOCATES the element
+    structural_path : tuple[int, ...]    # skips w:t and property elements; IDENTITY
     patch_boundary  : int                # zero-width position in patch_text
+    sentinel_start  : int                # == patch_boundary + ordinal
+    sentinel_end    : int                # == sentinel_start + 1
     ordinal         : int                # 0..n-1 in document order
     kind            : "oMath" | "oMathPara"
-    fingerprint     : (kind, ordinal, patch_boundary, source_path, c14n_sha256)
+    wrapper         : str | None         # containing structure, if not a w:p child
+    identity        : (kind, ordinal, structural_path, c14n_sha256)   # the oracle
+    fingerprint     : (kind, ordinal, patch_boundary, source_path, c14n_sha256)  # diagnostic
 
 OpaqueSegment
     source_element  : etree._Element
@@ -928,6 +962,11 @@ Naming the tag does that; a shared `opaque` bucket with hidden policy behind it 
 15. **Piece partition.** Within a `TextSegment`, the `TextPiece` ranges are ordered,
     non-overlapping, and concatenate to exactly `TextSegment.text`; every character of the
     segment belongs to exactly one piece.
+16. **Structural stability.** `structural_path` is unchanged by anything that is not a move:
+    collapsing a run's `w:t` elements, adding or removing a comment, adding a property element.
+    It changes when an equation actually moves. It is unique per span and the same depth as
+    `source_path`. `source_path` carries no such guarantee -- it is for locating, not comparing
+    (F14).
 
 ### Self-audit of the implementation (2026-09-08)
 
@@ -956,6 +995,30 @@ A third mutation initially looked like a blind spot and was not one — with the
 place it was behaviourally inert, so it never produced the leak it was meant to simulate. Worth
 recording because "the gate passed" and "the mutation did nothing" are indistinguishable without
 checking, and only one of them is a finding.
+
+### Second audit round (2026-09-08)
+
+Reviewing the boundary oracle turned up two more defects of the same family, both reproduced
+against the pin before being fixed.
+
+- **F13, zero-width insertion affinity.** `expected_boundaries` took `(start, end, new_length)`
+  triples, which cannot say which side of an equation an insertion landed on. Verified: `A -> AX`
+  and `B -> XB` both narrow to `(1, 1, 1)` and both yield `patch_text "AXB"`, with boundaries 2
+  and 1 respectively. The old function answered `2` for both. Now `AuthorizedTextEdit.affinity`
+  is required in exactly that case and `AmbiguousInsertion` is raised otherwise.
+- **F14, raw paths shift under a `w:t` collapse.** `math_identity` compared `source_path`, which
+  moves when `_rewrite_run_text` collapses a run's text nodes. Now it compares `structural_path`.
+
+Also fixed in the same pass: `expected_boundaries` trusted its caller entirely — it accepted
+`(99, 99, 1)` on a 6-character paragraph and two overlapping edits, returning plausible numbers
+for impossible input. It now takes the BEFORE projection so it can validate against the real
+paragraph, and refuses overlapping edit sets. It does **not** invent a rule for two insertions
+competing for one position: ArtifactCert's `_insertions_share_a_slot` judges that using anchor
+spans MathPatch does not have, so admissibility stays with the consumer's composition gate.
+
+And one test was removed rather than kept: `assert ... or True`, which could never fail. The
+condition it claimed to cover is unreachable through any input fixture and is verified by
+mutation instead, which the file now says plainly.
 
 ### What this model deliberately does not have
 

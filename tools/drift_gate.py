@@ -230,6 +230,23 @@ def main(argv: list[str]) -> int:
                         f"{len(proj.patch_text)}"
                     )
 
+            # --- structural paths must be unique and depth-consistent (F14) ---
+            structural = [s.structural_path for s in proj.spans]
+            if len(set(structural)) != len(structural):
+                stats["fail"] += 1
+                failures.append(
+                    f"{os.path.basename(path)} {loc}: two spans share a structural_path; "
+                    "identity could not tell them apart"
+                )
+            for span in proj.spans:
+                if len(span.structural_path) != len(span.source_path):
+                    stats["fail"] += 1
+                    failures.append(
+                        f"{os.path.basename(path)} {loc}: span {span.ordinal} has "
+                        f"structural depth {len(span.structural_path)} but source depth "
+                        f"{len(span.source_path)}"
+                    )
+
             # --- math spans must not overlap (invariant 5, the untested half) ---
             span_ids = [id(s.source_element) for s in proj.spans]
             span_els = [s.source_element for s in proj.spans]  # keep proxies alive

@@ -62,7 +62,7 @@ def span_digests(spans: tuple[ProtectedMathSpan, ...] | list[ProtectedMathSpan])
 def math_identity(span: ProtectedMathSpan) -> tuple[str, int, tuple[int, ...], str]:
     """What must NOT change when prose around an equation is edited.
 
-    `(kind, ordinal, source_path, c14n_digest)` -- contents and structural place.
+    `(kind, ordinal, structural_path, c14n_digest)` -- contents and structural place.
     Deliberately EXCLUDES `patch_boundary`, because a legitimate authorized edit that
     changes the length of text *before* an equation moves its boundary without moving
     the equation:
@@ -73,8 +73,12 @@ def math_identity(span: ProtectedMathSpan) -> tuple[str, int, tuple[int, ...], s
     Same OMML, same path, same ordinal. An oracle that required boundary equality would
     report that the equation moved and refuse a correct patch. Boundaries are verified
     separately, against a computed expectation -- see `expected_boundaries`.
+
+    It compares `structural_path`, not the raw `source_path`, for the same reason: a
+    run's several `w:t` collapse into one when its text is rewritten, which shifts raw
+    indices inside that run without moving anything (PLAN.md F14).
     """
-    return (span.kind, span.ordinal, span.path, span_digest(span))
+    return (span.kind, span.ordinal, span.structural_path, span_digest(span))
 
 
 def paragraph_identity(
@@ -239,11 +243,14 @@ def expected_boundaries(
     return tuple(out)
 
 
-def actual_boundaries(
-    spans: tuple[ProtectedMathSpan, ...] | list[ProtectedMathSpan],
-) -> tuple[int, ...]:
-    """Observed boundaries, for comparison against `expected_boundaries`."""
-    return tuple(s.patch_boundary for s in spans)
+def actual_boundaries(after: "ParagraphProjection") -> tuple[int, ...]:
+    """Observed boundaries, for comparison against `expected_boundaries`.
+
+    Equivalent to `after.math_boundaries()`; kept because the pairing
+    `expected_boundaries(before, edits) == actual_boundaries(after)` reads as the oracle
+    it is. Takes a projection so both halves have the same shape of argument.
+    """
+    return after.math_boundaries()
 
 
 def span_fingerprint(span: ProtectedMathSpan) -> tuple[str, int, int, tuple[int, ...], str]:

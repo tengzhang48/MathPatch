@@ -50,6 +50,9 @@ from .spans import (
     qn,
 )
 
+#: 1.3.0 (2026-09-08): math segments carry `structural_path`, which the identity oracle
+#: compares instead of the raw `source_path` -- the raw path is not stable under a run's
+#: `w:t` collapse (PLAN.md F14).
 #: 1.2.0 (2026-09-08): the projection returns a segment map with `patch_text` primary and
 #: `sentinel_text` derived; spans carry `patch_boundary` and `source_path`; text segments
 #: carry `TextPiece` sub-ranges. 1.1.0 added nested-run text and the sentinel refusal;
@@ -57,7 +60,7 @@ from .spans import (
 #: Bump on ANY change to the projection. A consumer whose stored artifact identity
 #: derives from it must record this value and refuse a mismatch rather than warn: a silent
 #: change to the projection is a silent change to that identity.
-CANONICAL_TEXT_CONTRACT_VERSION = "1.2.0"
+CANONICAL_TEXT_CONTRACT_VERSION = "1.3.0"
 
 
 class SentinelCollision(ValueError):
@@ -170,12 +173,18 @@ def project(p: etree._Element) -> ParagraphProjection:
         patch_offset += len(text)
         buf, pieces = [], []
 
-    def emit_math(el: etree._Element, path: tuple[int, ...], wrapper: str | None) -> None:
+    def emit_math(
+        el: etree._Element,
+        path: tuple[int, ...],
+        structural: tuple[int, ...],
+        wrapper: str | None,
+    ) -> None:
         nonlocal ordinal
         segments.append(
             MathSegment(
                 source_element=el,
                 source_path=path,
+                structural_path=structural,
                 patch_boundary=patch_offset,
                 # sentinel position = boundary + the sentinels already emitted, which
                 # keeps `sentinel_start - ordinal == patch_boundary` true by construction
@@ -202,10 +211,12 @@ def project(p: etree._Element) -> ParagraphProjection:
     def walk(
         el: etree._Element,
         path: tuple[int, ...],
+        structural: tuple[int, ...],
         wrapper: str | None,
         in_direct_run: bool,
     ) -> None:
         nonlocal run_el, run_path
+        structural_index = 0
         for index, child in enumerate(el):
             child_path = path + (index,)
             tag = child.tag
@@ -213,14 +224,35 @@ def project(p: etree._Element) -> ParagraphProjection:
             if not isinstance(tag, str):
                 # Comment or processing instruction. lxml gives these a callable tag, so
                 # QName() raises on them. ArtifactCert's parser keeps comments
-                # (`remove_comments=False`), so they reach us by design: skip.
+                # (`remove_comments=False`), so they reach us by design: skip. They
+                # consume no structural index, so adding one cannot shift an identity.
                 continue
             if tag in BENIGN_TAGS:
                 continue
 
+            if tag == qn("t"):
+                # Text nodes are not structural: a run's several w:t collapse into one
+                # under `_rewrite_run_text`, and that must not move anything's identity.
+                if in_direct_run:
+                    piece_text = child.text or ""
+                    if piece_text:
+                        local_start = sum(len(part) for part in buf)
+                        buf.append(piece_text)
+                        pieces.append(
+                            TextPiece(
+                                element=child,
+                                local_start=local_start,
+                                local_end=local_start + len(piece_text),
+                            )
+                        )
+                continue
+
+            child_structural = structural + (structural_index,)
+            structural_index += 1
+
             if tag in MATH_TAGS:
                 flush()
-                emit_math(child, child_path, wrapper)
+                emit_math(child, child_path, child_structural, wrapper)
                 continue
 
             if tag == qn("r"):
@@ -238,28 +270,14 @@ def project(p: etree._Element) -> ParagraphProjection:
                     walk(
                         child,
                         child_path,
+                        child_structural,
                         wrapper if wrapper is not None else ("r" if el is p else wrapper),
                         True,
                     )
                     flush()
                     run_el, run_path = saved_el, saved_path
                 else:
-                    walk(child, child_path, wrapper, False)
-                continue
-
-            if tag == qn("t"):
-                if in_direct_run:
-                    piece_text = child.text or ""
-                    if piece_text:
-                        local_start = sum(len(part) for part in buf)
-                        buf.append(piece_text)
-                        pieces.append(
-                            TextPiece(
-                                element=child,
-                                local_start=local_start,
-                                local_end=local_start + len(piece_text),
-                            )
-                        )
+                    walk(child, child_path, child_structural, wrapper, False)
                 continue
 
             # Anything else: report it structurally, then descend for nested math or for
@@ -269,11 +287,12 @@ def project(p: etree._Element) -> ParagraphProjection:
             walk(
                 child,
                 child_path,
+                child_structural,
                 wrapper if wrapper is not None else local_name(child),
                 in_direct_run,
             )
 
-    walk(p, (), None, False)
+    walk(p, (), (), None, False)
     flush()
 
     patch_text = "".join(

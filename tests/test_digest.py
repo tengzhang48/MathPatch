@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from conftest import omath, para, run
+from conftest import omath, omathpara, para, run
 from mathpatch import project
 from lxml import etree
 
@@ -157,7 +157,7 @@ class TestIdentityVsPlacement:
         before, after = self._prose_before_equation()
         # authorized changed middle: "result" at [4,10) becomes "numerical result" (16)
         assert expected_boundaries(project(before), [(4, 10, 16)]) == (21,)
-        assert actual_boundaries(math_spans(after)) == (21,)
+        assert actual_boundaries(project(after)) == (21,)
 
     def test_edit_after_the_equation_leaves_the_boundary_fixed(self):
         from mathpatch import expected_boundaries
@@ -284,3 +284,83 @@ class TestEditSetValidation:
 
         with pytest.raises(ValueError):
             AuthorizedTextEdit(0, 1, -1)
+
+
+class TestStructuralPathStability:
+    """Identity must survive a w:t collapse. PLAN.md F14."""
+
+    def test_structural_path_ignores_w_t_siblings(self):
+        """A run's several w:t collapse into one when its text is rewritten. The raw
+        index of anything after them inside that run shifts; the structural index
+        must not."""
+        many = para('<w:r><w:t>aa</w:t><w:t>bb</w:t>' + omath() + '</w:r>')
+        one = para('<w:r><w:t>aabb</w:t>' + omath() + '</w:r>')
+        (a,) = math_spans(many)
+        (b,) = math_spans(one)
+        assert a.source_path != b.source_path          # raw index moved
+        assert a.structural_path == b.structural_path  # structural index did not
+
+    def test_identity_survives_the_collapse(self):
+        from mathpatch import paragraph_identity
+
+        many = para('<w:r><w:t>aa</w:t><w:t>bb</w:t>' + omath() + '</w:r>')
+        one = para('<w:r><w:t>aabb</w:t>' + omath() + '</w:r>')
+        assert paragraph_identity(math_spans(many)) == paragraph_identity(math_spans(one))
+
+    def test_identity_still_detects_a_real_move(self):
+        from mathpatch import paragraph_identity
+
+        before = para(run("A") + omath() + run("B"))
+        after = para(run("A") + run("B") + omath())
+        assert math_spans(before)[0].structural_path == (1,)
+        assert math_spans(after)[0].structural_path == (2,)
+        assert paragraph_identity(math_spans(before)) != paragraph_identity(math_spans(after))
+
+    def test_comments_do_not_shift_structural_paths(self):
+        """A comment consumes no structural index, so adding one cannot move an
+        identity."""
+        plain = para(run("a") + omath())
+        commented = para(run("a") + "<!-- note -->" + omath())
+        assert math_spans(plain)[0].structural_path == math_spans(commented)[0].structural_path
+
+    def test_property_elements_do_not_shift_structural_paths(self):
+        bare = para(run("a") + omath())
+        with_props = para("<w:pPr/>" + run("a") + omath())
+        assert math_spans(bare)[0].structural_path == math_spans(with_props)[0].structural_path
+
+    def test_structural_paths_are_unique_per_span(self):
+        p = para(run("a") + omath() + run("b") + omathpara() + f"<w:ins>{omath()}</w:ins>")
+        paths = [s.structural_path for s in math_spans(p)]
+        assert len(set(paths)) == len(paths)
+
+
+class TestAdjacentMathInsertionLimits:
+    """Two spans at one boundary: affinity places an insertion relative to BOTH."""
+
+    def test_affinity_applies_to_every_span_at_that_boundary(self):
+        from mathpatch import AuthorizedTextEdit, expected_boundaries
+
+        p = para(run("A") + omath() + omath() + run("B"))
+        assert project(p).math_boundaries() == (1, 1)
+        left = AuthorizedTextEdit(1, 1, 1, affinity="left")
+        right = AuthorizedTextEdit(1, 1, 1, affinity="right")
+        assert expected_boundaries(project(p), [left]) == (2, 2)
+        assert expected_boundaries(project(p), [right]) == (1, 1)
+
+    # NOTE: inserting BETWEEN two adjacent equations -- boundaries (1, 2) -- is not
+    # expressible, and deliberately so: a consumer's insertion attaches to a run
+    # (`_insert_after_anchor` picks the fragment owning the character before the
+    # position), and there is no run between two adjacent oMath elements. So "which run
+    # hosts it" is exactly the left/right question, and no third case can arise from the
+    # consumer's own insertion mechanism.
+
+    def test_two_insertions_at_one_position_are_left_to_the_consumer(self):
+        """ArtifactCert's `_insertions_share_a_slot` judges whether two insertions
+        competing for one slot are compatible, using the anchor spans -- which MathPatch
+        does not have. So it does not invent a rule here; it computes each edit's effect
+        and lets the composition gate decide admissibility."""
+        from mathpatch import AuthorizedTextEdit, expected_boundaries
+
+        p = para(run("aaa") + omath() + run("bbb"))
+        edits = [AuthorizedTextEdit(1, 1, 2), AuthorizedTextEdit(1, 1, 3)]
+        assert expected_boundaries(project(p), edits) == (3 + 2 + 3,)
