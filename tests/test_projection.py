@@ -333,12 +333,15 @@ class TestInvariant5NonOverlap:
         p = para(BUSY)
         assert len(project(p).math_segments) == len(list(outermost_math(p)))
 
-    def test_orphaned_text_fails_closed(self):
-        """flush() used to discard text buffered with no run context, which made a
-        traversal bug look like missing text."""
-        import mathpatch.canonical as canonical
-
-        assert "refusing to drop them silently" in canonical.project.__doc__ or True
-        # the behaviour itself: a direct paragraph-level w:t is not in a run, so it
-        # must contribute nothing rather than being mis-attributed
+    def test_paragraph_level_stray_text_contributes_nothing(self):
+        """A w:t that is not inside a direct w:r is excluded, matching _para_text."""
         assert project(para("<w:t>stray</w:t>")).patch_text == ""
+
+    # NOTE: flush() also raises if text is ever buffered with no enclosing run context.
+    # That state is unreachable through any input fixture -- `in_direct_run` is only true
+    # inside the branch that sets the run -- so it is verified by MUTATION, not by a unit
+    # test: forcing `in_direct_run=True` for a run inside a wrapper makes the drift gate
+    # report "traversal bug: 8 characters buffered with no run context". An earlier
+    # version of this file asserted `... or True` here, which could never fail; in a
+    # project whose tests are meant to be evidence, a green test that proves nothing is
+    # worse than an honest note.

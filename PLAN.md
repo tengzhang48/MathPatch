@@ -1,7 +1,9 @@
 # MathPatch — Plan
 
-**Status:** M0 and M0.1 complete. Verified against ArtifactCert `origin/main` at
-`0992741` (2026-09-07) — see the reading discipline in section 3.
+**Status:** M0, M0.1 and M1 item 1 (`ParagraphProjection`) complete. Verified against the
+**pinned** ArtifactCert commit `0992741` (2026-09-07), named in `INTEGRATION_TARGET.txt`.
+`origin/main` has since moved on — `b330bf8` as of 2026-09-08 — and the pin is deliberate: every
+claim here refers to `0992741` and nothing else. See the reading discipline in section 3.
 **Relationship to ArtifactCert:** MathPatch is developed as an independent package and
 integrated into ArtifactCert afterwards. It is not a fork, not a plugin, and it never
 becomes an authority over document identity.
@@ -193,11 +195,12 @@ a **replacement** that spans a math boundary — `safety.py` states it plainly: 
 on BOTH sides would splice around math and remains forbidden."* Insertions and substitutions
 do not use the deletion exception.
 
-So the 48.5% is the population *at risk*, not the population currently blocked. The number
-that decides whether generalized holes are worth building is: **of real authorized changes on
+So the 48.5% is the population *at risk*, not the population currently blocked. The number that
+decides whether generalized holes are worth building is: *of real authorized changes on
 math-bearing paragraphs, how many are replacements spanning a boundary that the deletion-only
-path cannot express?** That is an M1 measurement, not an assumption, and it is the one number
-this plan does not yet have.
+path cannot express?*
+
+**Measured, and it is ZERO of 364** — see M1 item 4. Generalized holes are not being built.
 
 
 ### F3 — Byte-level containment conflicts with a decision already made
@@ -387,6 +390,32 @@ diagnostic snapshot and is documented as *not* a cross-patch oracle.
 
 This is only simple because generalized holes were dropped — a successful edit extent never
 crosses a boundary, so the transform is a sum of deltas rather than a splice model.
+
+### F13 — Three integers cannot place a zero-width insertion
+
+`expected_boundaries` originally took `(start, end, new_length)` triples and shifted a boundary
+whenever `end <= boundary`. That is under-specified. `A [eq] B` has patch text `"AB"` with a
+boundary at 1, and both of these narrow to the identical changed middle `(1, 1, 1)`:
+
+    A -> AX     the text lands BEFORE the equation      boundary 1 -> 2
+    B -> XB     the text lands AFTER  the equation      boundary stays 1
+
+Verified: both produce `patch_text == "AXB"`, with boundaries 2 and 1 respectively. The old
+function answered `2` for both, so it was wrong half the time on precisely the case it exists to
+police.
+
+The consumer already knows the answer — its insertion logic chose a host run, and a prefix and a
+suffix insertion deliberately inherit from different sides — so the information was thrown away
+at the API, not missing. `AuthorizedTextEdit` now carries `affinity` (`"left"`/`"right"`), which
+is **required** for a zero-width insertion whose position coincides with a boundary and ignored
+everywhere else; omitting it raises `AmbiguousInsertion` rather than guessing.
+`affinity_from_host(host_path, math_path)` derives it from document order alone, so no Word
+formatting policy crosses the boundary, and refuses when the host contains the equation.
+
+The same review pass found `expected_boundaries` trusted its caller for the rest, too: it
+accepted extents outside the paragraph and overlapping edit sets, returning plausible numbers for
+impossible inputs. It now takes the BEFORE `ParagraphProjection` rather than bare spans, so it
+can validate extents against the real paragraph length, and it refuses overlapping edits.
 
 ### Reading the ArtifactCert tree (discipline, learned the hard way)
 
@@ -657,8 +686,13 @@ proposed changing ArtifactCert's canonical text first.
 
    ```
    paragraph_identity(after) == paragraph_identity(before)
-   actual_boundaries(after)  == expected_boundaries(before, authorized_changed_middles)
+   actual_boundaries(after)  == expected_boundaries(before_projection, edits)
    ```
+
+   where `edits` are `AuthorizedTextEdit(start, end, new_length, affinity)` records over the
+   changed middles. `affinity` is required only for a zero-width insertion sitting exactly on a
+   boundary, where three integers are genuinely ambiguous (F13); ArtifactCert can derive it from
+   the host its insertion logic already chose, via `affinity_from_host`.
 
    The first is equality of `(kind, ordinal, source_path, c14n_digest)` per span and is invariant
    under prose edits. The second predicts where each zero-width boundary must land. Requiring
@@ -977,7 +1011,7 @@ payload hashes, protected-span C14N digests, ArtifactCert binding re-verificatio
         verify_m0.sh               # one command: tests + fixture + probe + gate
         test_local.sh              # CI-equivalent; needs only this repo
         make_evidence.py           # M0_EVIDENCE.json, fails closed on the pin
-        measure_math_refusals.py   # answered M1 item 4: 2 of 364
+        measure_math_refusals.py   # answered M1 item 4: 0 of 364
     tests/
         fixtures/descent.docx   # generated; the only source of wrapper-nested math
 

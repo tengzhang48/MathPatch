@@ -6,7 +6,7 @@ The distinctive claim is not conversion:
 
 > **Edit an existing scientific equation safely, rather than regenerate it.**
 
-## What exists today (M0 / M0.1)
+## What exists today (M0, M0.1, and M1 item 1)
 
 - **equation-aware canonical projection** — one traversal of a paragraph yields its canonical
   text and the positions of every math span, so text and offsets cannot disagree
@@ -14,6 +14,11 @@ The distinctive claim is not conversion:
   descent (math inside a revision wrapper, hyperlink, or run is still found)
 - **round-trip-stable digests** — C14N hashes that survive an lxml parse/mutate/reserialize
   cycle, so a protected equation can be *proven* unchanged rather than assumed unchanged
+- **a segment map** (`ParagraphProjection`) — one traversal yields `patch_text` plus
+  `TextSegment`/`TextPiece`, `MathSegment` and uninterpreted `OpaqueSegment` records, so a
+  consumer never rebuilds run coordinates
+- **a protected-math oracle** — `paragraph_identity` for contents and structural place, and
+  `expected_boundaries` for where each equation must sit after an authorized text change
 
 That is a read-only foundation. It does not yet modify an equation.
 

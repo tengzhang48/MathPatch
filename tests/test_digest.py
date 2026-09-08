@@ -156,29 +156,131 @@ class TestIdentityVsPlacement:
 
         before, after = self._prose_before_equation()
         # authorized changed middle: "result" at [4,10) becomes "numerical result" (16)
-        edits = [(4, 10, 16)]
-        assert expected_boundaries(math_spans(before), edits) == (21,)
+        assert expected_boundaries(project(before), [(4, 10, 16)]) == (21,)
         assert actual_boundaries(math_spans(after)) == (21,)
 
     def test_edit_after_the_equation_leaves_the_boundary_fixed(self):
         from mathpatch import expected_boundaries
 
         p = para(run("aaa") + omath() + run("bbb"))
-        assert expected_boundaries(math_spans(p), [(3, 6, 12)]) == (3,)
+        assert expected_boundaries(project(p), [(3, 6, 12)]) == (3,)
 
     def test_a_crossing_edit_has_no_defined_transform(self):
         from mathpatch import BoundaryCrossing, expected_boundaries
 
         p = para(run("aaa") + omath() + run("bbb"))
         with pytest.raises(BoundaryCrossing):
-            expected_boundaries(math_spans(p), [(2, 5, 3)])
+            expected_boundaries(project(p), [(2, 5, 3)])
 
     def test_multiple_edits_accumulate_only_before_the_boundary(self):
         from mathpatch import expected_boundaries
 
         # patch_text "aaabbbccc" with math after "aaabbb" -> boundary 6
         p = para(run("aaa") + run("bbb") + omath() + run("ccc"))
-        (span,) = math_spans(p)
-        assert span.patch_boundary == 6
+        assert math_spans(p)[0].patch_boundary == 6
         # +2 before, -1 before, +5 after -> boundary 6 + 1
-        assert expected_boundaries([span], [(0, 3, 5), (3, 6, 2), (6, 9, 14)]) == (6 + 2 - 1,)
+        assert expected_boundaries(project(p), [(0, 3, 5), (3, 6, 2), (6, 9, 14)]) == (7,)
+
+
+class TestZeroWidthInsertionAffinity:
+    """One edit triple, two correct answers. PLAN.md F13."""
+
+    @staticmethod
+    def _before():
+        return para(run("A") + omath() + run("B"))   # patch_text "AB", boundary 1
+
+    def test_both_outcomes_are_reachable_from_the_same_edit_triple(self):
+        """The ambiguity itself: identical patch text, different boundaries."""
+        left = para(run("AX") + omath() + run("B"))
+        right = para(run("A") + omath() + run("XB"))
+        assert project(left).patch_text == project(right).patch_text == "AXB"
+        assert math_spans(left)[0].patch_boundary == 2
+        assert math_spans(right)[0].patch_boundary == 1
+
+    def test_undeclared_affinity_is_refused_not_guessed(self):
+        from mathpatch import AmbiguousInsertion, expected_boundaries
+
+        with pytest.raises(AmbiguousInsertion):
+            expected_boundaries(project(self._before()), [(1, 1, 1)])
+
+    def test_left_affinity_shifts_the_boundary(self):
+        from mathpatch import AuthorizedTextEdit, expected_boundaries
+
+        edit = AuthorizedTextEdit(1, 1, 1, affinity="left")
+        assert expected_boundaries(project(self._before()), [edit]) == (2,)
+
+    def test_right_affinity_leaves_it_fixed(self):
+        from mathpatch import AuthorizedTextEdit, expected_boundaries
+
+        edit = AuthorizedTextEdit(1, 1, 1, affinity="right")
+        assert expected_boundaries(project(self._before()), [edit]) == (1,)
+
+    def test_a_zero_width_insertion_away_from_the_boundary_needs_no_affinity(self):
+        from mathpatch import expected_boundaries
+
+        p = para(run("aaa") + omath() + run("bbb"))
+        assert expected_boundaries(project(p), [(1, 1, 4)]) == (7,)   # before -> shifts
+        assert expected_boundaries(project(p), [(5, 5, 4)]) == (3,)   # after  -> fixed
+
+    def test_affinity_from_host_uses_document_order_only(self):
+        from mathpatch import affinity_from_host
+
+        assert affinity_from_host((0,), (1,)) == "left"
+        assert affinity_from_host((2,), (1,)) == "right"
+
+    def test_affinity_from_host_refuses_a_containing_host(self):
+        from mathpatch import AmbiguousInsertion, affinity_from_host
+
+        with pytest.raises(AmbiguousInsertion):
+            affinity_from_host((1,), (1, 0))
+
+    def test_invalid_affinity_value_is_refused(self):
+        from mathpatch import AuthorizedTextEdit
+
+        with pytest.raises(ValueError):
+            AuthorizedTextEdit(1, 1, 1, affinity="sideways")
+
+
+class TestEditSetValidation:
+    """An oracle must not compute a plausible answer for an impossible edit set."""
+
+    def test_out_of_range_extent_is_refused(self):
+        from mathpatch import expected_boundaries
+
+        p = para(run("aaa") + omath() + run("bbb"))
+        with pytest.raises(ValueError):
+            expected_boundaries(project(p), [(99, 99, 1)])
+
+    def test_inverted_extent_is_refused(self):
+        from mathpatch import expected_boundaries
+
+        p = para(run("aaa") + omath() + run("bbb"))
+        with pytest.raises(ValueError):
+            expected_boundaries(project(p), [(4, 2, 1)])
+
+    def test_overlapping_edits_are_refused(self):
+        from mathpatch import expected_boundaries
+
+        p = para(run("aaa") + omath() + run("bbb"))
+        with pytest.raises(ValueError):
+            expected_boundaries(project(p), [(0, 2, 5), (1, 3, 5)])
+
+    def test_an_edit_inside_another_is_refused(self):
+        from mathpatch import expected_boundaries
+
+        p = para(run("aaabbb") + omath())
+        with pytest.raises(ValueError):
+            expected_boundaries(project(p), [(0, 5, 3), (2, 2, 1)])
+
+    def test_adjacent_edits_are_allowed(self):
+        from mathpatch import expected_boundaries
+
+        # patch_text "aaabbb", boundary 6. [0,3)->4 chars is +1; [3,6)->6 chars is +3.
+        p = para(run("aaabbb") + omath())
+        assert expected_boundaries(project(p), [(0, 3, 4), (3, 6, 6)]) == (10,)
+
+    def test_negative_new_length_is_refused(self):
+        from mathpatch import AuthorizedTextEdit
+
+        with pytest.raises(ValueError):
+            AuthorizedTextEdit(0, 1, -1)

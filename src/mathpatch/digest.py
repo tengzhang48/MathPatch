@@ -25,10 +25,15 @@ math-bearing paragraph. The choice therefore rests on purpose:
 from __future__ import annotations
 
 import hashlib
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Sequence
 
 from lxml import etree
 
 from .spans import MathSegment, ProtectedMathSpan
+
+if TYPE_CHECKING:  # pragma: no cover
+    from .canonical import ParagraphProjection
 
 C14N_KWARGS: dict[str, bool] = {"exclusive": True, "with_comments": True}
 
@@ -88,44 +93,148 @@ class BoundaryCrossing(ValueError):
     """An authorized edit extent spans a math boundary.
 
     The pinned consumer refuses these (`safety.py`: `span_start < offset < span_end`),
-    and MathPatch does not implement generalized holes -- measured unnecessary, 2 of 364
-    real authorized edits. So a crossing extent has no defined boundary transform.
+    and MathPatch does not implement generalized holes -- measured unnecessary: **0 of
+    364** real authorized edits are blocked by the cross-equation replacement case once
+    the engine's `narrow_to_changed_middle` step is replayed. So a crossing extent has no
+    defined boundary transform.
     """
+
+
+class AmbiguousInsertion(ValueError):
+    """A zero-width insertion sits exactly on a math boundary, with no side declared.
+
+    `A [eq] B` has patch text `"AB"` and a boundary at 1. Both of these narrow to the
+    same changed middle `(1, 1, 1)`:
+
+        A -> AX     the text lands BEFORE the equation; the boundary moves 1 -> 2
+        B -> XB     the text lands AFTER  the equation; the boundary stays at 1
+
+    Three integers cannot tell those apart, so guessing would make the oracle wrong half
+    the time on exactly the case it is supposed to police. The consumer already knows the
+    answer -- its insertion logic chose a host run -- so it must say which side, either
+    by setting `AuthorizedTextEdit.affinity` or by deriving it with `affinity_from_host`.
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class AuthorizedTextEdit:
+    """One authorized change to a paragraph's patch text.
+
+    `start`/`end` index the BEFORE `patch_text` and describe the *changed middle*, not
+    the full reviewer-quoted span -- that is what the consumer actually rewrites
+    (`engine.narrow_to_changed_middle`).
+
+    `affinity` is meaningful only for a zero-width insertion (`start == end`) whose
+    position coincides with a math boundary, and is REQUIRED there:
+
+      "left"   the inserted text goes before the math element in document order,
+               so the boundary shifts right by `new_length`
+      "right"  it goes after the math element, so the boundary does not move
+    """
+
+    start: int
+    end: int
+    new_length: int
+    affinity: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.affinity not in (None, "left", "right"):
+            raise ValueError(
+                f"affinity must be 'left', 'right' or None, not {self.affinity!r}"
+            )
+        if self.new_length < 0:
+            raise ValueError(f"new_length must be non-negative, not {self.new_length}")
+
+
+def affinity_from_host(
+    host_path: tuple[int, ...], math_path: tuple[int, ...]
+) -> str:
+    """Derive affinity from the element the consumer's insertion logic chose as host.
+
+    Document order only -- no Word formatting policy crosses this boundary. Index paths
+    within a paragraph sort in document order, so a host that precedes the math element
+    means the insertion lands before it.
+
+    Raises if the host CONTAINS the math element (one path is a prefix of the other):
+    an insertion inside the run that holds the equation could fall on either side, and
+    only the consumer knows which.
+    """
+    shorter = min(len(host_path), len(math_path))
+    if host_path[:shorter] == math_path[:shorter]:
+        raise AmbiguousInsertion(
+            f"host {host_path} and math {math_path} are on the same branch; the host "
+            "contains or is contained by the equation, so affinity must be stated "
+            "explicitly"
+        )
+    return "left" if host_path < math_path else "right"
 
 
 def expected_boundaries(
-    spans: tuple[ProtectedMathSpan, ...] | list[ProtectedMathSpan],
-    edits: tuple[tuple[int, int, int], ...] | list[tuple[int, int, int]],
+    before: "ParagraphProjection",
+    edits: "Sequence[AuthorizedTextEdit | tuple[int, int, int]]",
 ) -> tuple[int, ...]:
     """Where each math boundary MUST land after the given authorized edits.
 
-    `spans` are the BEFORE spans; `edits` are `(start, end, new_length)` triples in
-    BEFORE patch coordinates -- the *changed middles*, not the full reviewer-quoted
-    spans, because that is what the consumer actually rewrites
-    (`engine.narrow_to_changed_middle`).
+    Takes the BEFORE projection, not just its spans, so it can validate the edit set
+    against the actual paragraph rather than trusting its caller for something this
+    central. Refuses:
 
-    A boundary shifts by the net length delta of every edit that ends at or before it,
-    and is unaffected by edits that begin at or after it. An edit strictly containing a
-    boundary raises `BoundaryCrossing`.
+      - an extent outside `[0, len(before.patch_text)]`, or inverted;
+      - two edits that overlap (the consumer's composition gate should prevent this, but
+        an oracle that computes a plausible answer for an impossible edit set is worse
+        than one that refuses);
+      - an edit strictly containing a math boundary (`BoundaryCrossing`);
+      - a zero-width insertion on a boundary with no affinity (`AmbiguousInsertion`).
 
-    Pair this with `paragraph_identity` equality: together they say the equations are
-    the same equations, unchanged, still in the same structural places, and sitting
-    exactly where the authorized text transformation implies they should.
+    A boundary otherwise shifts by the net length delta of every edit ending at or before
+    it, and is unaffected by edits beginning at or after it.
+
+    Pair with `paragraph_identity` equality: together they say the equations are the same
+    equations, unchanged, still in the same structural places, and sitting exactly where
+    the authorized text transformation implies they should.
     """
+    limit = len(before.patch_text)
+    normalized: list[AuthorizedTextEdit] = [
+        e if isinstance(e, AuthorizedTextEdit) else AuthorizedTextEdit(*e) for e in edits
+    ]
+
+    for edit in normalized:
+        if not 0 <= edit.start <= edit.end <= limit:
+            raise ValueError(
+                f"edit extent [{edit.start}, {edit.end}) is not a valid range within "
+                f"patch text of length {limit}"
+            )
+
+    ordered = sorted(normalized, key=lambda e: (e.start, e.end))
+    for previous, current in zip(ordered, ordered[1:]):
+        if previous.end > current.start:
+            raise ValueError(
+                f"edits [{previous.start}, {previous.end}) and "
+                f"[{current.start}, {current.end}) overlap; the authorized edit set is "
+                "not a valid transformation of one paragraph"
+            )
+
     out: list[int] = []
-    for span in spans:
+    for span in before.math_segments:
         boundary = span.patch_boundary
         delta = 0
-        for start, end, new_length in edits:
-            if start > end:
-                raise ValueError(f"edit extent [{start}, {end}) is inverted")
-            if start < boundary < end:
+        for edit in normalized:
+            if edit.start < boundary < edit.end:
                 raise BoundaryCrossing(
-                    f"edit extent [{start}, {end}) strictly contains the math boundary "
-                    f"at {boundary}; generalized holes are not implemented"
+                    f"edit extent [{edit.start}, {edit.end}) strictly contains the math "
+                    f"boundary at {boundary}; generalized holes are not implemented"
                 )
-            if end <= boundary:
-                delta += new_length - (end - start)
+            if edit.start == edit.end == boundary:
+                if edit.affinity is None:
+                    raise AmbiguousInsertion(
+                        f"a zero-width insertion of {edit.new_length} character(s) sits "
+                        f"exactly on the math boundary at {boundary}; declare affinity "
+                        "'left' (before the equation) or 'right' (after it)"
+                    )
+                if edit.affinity == "left":
+                    delta += edit.new_length
+            elif edit.end <= boundary:
+                delta += edit.new_length - (edit.end - edit.start)
         out.append(boundary + delta)
     return tuple(out)
 

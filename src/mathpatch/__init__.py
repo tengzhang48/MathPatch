@@ -23,7 +23,10 @@ from .canonical import (
 )
 from .digest import (
     C14N_KWARGS,
+    AmbiguousInsertion,
+    AuthorizedTextEdit,
     BoundaryCrossing,
+    affinity_from_host,
     actual_boundaries,
     c14n_bytes,
     digest,
@@ -57,6 +60,9 @@ from .spans import (
 __version__ = "0.1.0"
 
 __all__ = [
+    "affinity_from_host",
+    "AuthorizedTextEdit",
+    "AmbiguousInsertion",
     "patch_text",
     "TextSegment",
     "TextPiece",
