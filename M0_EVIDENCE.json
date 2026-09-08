@@ -1,10 +1,10 @@
 {
   "artifactcert": {
     "commit": "0992741068cd3f0806d3ff63958a43a84a38bd32",
-    "origin_main": "ce8ffde86b31bd931593f7d0fc8468fbee85dfd1",
-    "origin_main_date": "2026-09-07T23:34:48+00:00",
+    "origin_main": "b330bf8fd109da5289e284b577f37a9b1f8a2ae3",
+    "origin_main_date": "2026-09-08T00:08:15+00:00",
     "pinned_target": "0992741068cd3f0806d3ff63958a43a84a38bd32",
-    "src": "/tmp/artifactcert-pinned-333366/src"
+    "src": "/tmp/artifactcert-pinned-350266/src"
   },
   "checks": {
     "note": "drift gate and C14N probe are run by tools/verify_m0.sh; this record binds the inputs they were run against.",
@@ -91,14 +91,14 @@
     "path": "tests/fixtures/descent.docx",
     "sha256": "b9c7ce31f6ceb07b05b8d00668f1f7145ed1f4ad424d6291c6e1e3fc99f60317"
   },
-  "generated_utc": "2026-09-07T23:37:39+00:00",
+  "generated_utc": "2026-09-08T00:11:31+00:00",
   "mathpatch": {
     "c14n_kwargs": {
       "exclusive": true,
       "with_comments": true
     },
-    "canonical_text_contract_version": "1.1.0",
-    "commit": "f88fda5089f055af6802c65635fdc814c38bd1ae",
+    "canonical_text_contract_version": "1.2.0",
+    "commit": "84df87349cd1a973d471f9d1875a2f4351d7b4f5",
     "dirty": false,
     "version": "0.1.0"
   },
