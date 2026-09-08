@@ -87,9 +87,9 @@ def para_shape(p: etree._Element) -> str | None:
     proj = project(p)
     if not proj.spans:
         return None
-    text = proj.text
-    first = proj.spans[0].start
-    last = proj.spans[-1].end
+    text = proj.patch_text
+    first = proj.spans[0].patch_boundary
+    last = proj.spans[-1].patch_boundary
     before = bool(text[:first].strip())
     after = bool(text[last:].strip())
     if before and after:
@@ -127,7 +127,7 @@ def inspect(path: str) -> dict | None:
 
     for p in root.iter(qn("p")):
         proj = project(p)
-        body_text = proj.text.replace(SENTINEL, "").strip()
+        body_text = proj.patch_text.strip()
         if not body_text and not proj.spans:
             continue
         rec["paras"] += 1

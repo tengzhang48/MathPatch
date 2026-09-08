@@ -753,10 +753,19 @@ gets that direction from `dwml` for display (F9), so competing on conversion wou
 duplication.
 
 
-## 7a. ParagraphProjection — the frozen data model (for review before implementation)
+## 7a. ParagraphProjection — the data model — **IMPLEMENTED 2026-09-08**
 
 This is the seam both packages consume. Changing its shape after ArtifactCert depends on it
-costs far more than another review round, so it is specified here before it is built.
+costs far more than another review round, so it was specified and reviewed before being built.
+
+**Status:** implemented in `canonical.project` / `spans.py`, contract version **1.2.0**. All 15
+invariants below have adversarial tests in `tests/test_projection.py` (30 tests), written first
+and proved red. The drift gate still passes against the pin — 4,654 paragraphs, 1,175 spans,
+FAIL=0 — so `patch_text` remains byte-identical to `_para_text`, and the gate now also checks
+`sentinel_start - ordinal == patch_boundary` on every span. The corpus shape baseline is
+unchanged (112 / 87 / 32).
+
+One invariant was sharpened during implementation: see 11.
 
 ### Shape
 
@@ -798,7 +807,7 @@ OpaqueSegment
     local_name      : str                # "sym" | "hyperlink" | "fldSimple" | "sdt" | "ins" | ...
 ```
 
-### Two decisions worth arguing about
+### Two decisions, both settled in review
 
 **`patch_text` becomes primary and the sentinel stream becomes a derived view.** Today it is the
 other way round: `Projection.text` is the sentinel stream. The consumer's coordinates are the
@@ -862,8 +871,13 @@ Naming the tag does that; a shared `opaque` bucket with hidden policy behind it 
    `MathSegment`'s sentinel position minus its ordinal equals its `patch_boundary`.
 10. **Refusal, not repair.** An authored U+FFFC raises `SentinelCollision`; a shape MathPatch
     cannot place is reported in `anomalies` rather than silently dropped.
-11. **Path identity.** `source_path` uniquely identifies an element's position within the
-    paragraph, and two distinct segments never share one.
+11. **Path identity.** `source_path` locates the segment's source element within the
+    paragraph — following the index path reaches exactly that element. The uniqueness key is
+    `(source_path, position)`, **not** `source_path` alone: a run whose text is interrupted by
+    interior structure (a `w:sym` between two `w:t`) yields one `TextSegment` per contiguous
+    stretch, all carrying that run's path, which is correct because grouping by
+    `source_element` is how a consumer recovers the `RunFragment`. Sharpened during
+    implementation after the predicted collision was reproduced.
 12. **Identity invariance.** `paragraph_identity` is unchanged by any authorized prose edit,
     *including one that changes the length of text before an equation*. The earlier form of this
     invariant was self-contradictory — it demanded both that the fingerprint change when

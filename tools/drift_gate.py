@@ -7,10 +7,10 @@ because that is the coordinate system a consumer's edit extents live in. (Replac
 section 2 -- but the projection is useless at the seam unless it agrees with it.)
 The property proved here:
 
-  math-free paragraph -> byte-identical to _para_text
-  math paragraph      -> identical to _para_text once sentinels are removed,
-                         with one sentinel per discovered span, each span offset
-                         landing on a sentinel
+  every paragraph -> `patch_text` is byte-identical to `_para_text`
+  math paragraph  -> the derived `sentinel_text` carries exactly one sentinel per
+                     discovered span, each span's sentinel offset landing on one,
+                     and `sentinel_start - ordinal == patch_boundary`
 
 Any failure means the projection and the consumer disagree about which characters an
 edit extent covers -- so every protected-span offset handed across the seam would be
@@ -149,28 +149,29 @@ def main(argv: list[str]) -> int:
 
             if not ac_has_math:
                 stats["mathfree"] += 1
-                if proj.text != ac:
+                if proj.patch_text != ac:
                     stats["fail"] += 1
                     failures.append(
                         f"{os.path.basename(path)} {loc}: math-free text differs\n"
-                        f"    artifactcert={ac!r}\n    mathpatch   ={proj.text!r}"
+                        f"    artifactcert={ac!r}\n    mathpatch   ={proj.patch_text!r}"
                     )
                 continue
 
             stats["math"] += 1
             stats["spans"] += len(proj.spans)
-            stripped = proj.text.replace(SENTINEL, "")
-            if stripped != ac:
+            # patch_text IS the comparison now that it is the primary stream; the
+            # sentinel view is derived and checked separately below.
+            if proj.patch_text != ac:
                 stats["fail"] += 1
                 failures.append(
                     f"{os.path.basename(path)} {loc}: not a strict extension\n"
-                    f"    artifactcert       ={ac!r}\n    mathpatch(sentinels stripped)={stripped!r}"
+                    f"    artifactcert    ={ac!r}\n    mathpatch.patch_text={proj.patch_text!r}"
                 )
-            if proj.text.count(SENTINEL) != len(proj.spans):
+            if proj.sentinel_text.count(SENTINEL) != len(proj.spans):
                 stats["fail"] += 1
                 failures.append(
                     f"{os.path.basename(path)} {loc}: {len(proj.spans)} spans but "
-                    f"{proj.text.count(SENTINEL)} sentinels"
+                    f"{proj.sentinel_text.count(SENTINEL)} sentinels"
                 )
             # Hold strong references while comparing: id() on a collected lxml
             # proxy can be reused by a new proxy for a different node.
@@ -188,7 +189,14 @@ def main(argv: list[str]) -> int:
                 )
 
             for span in proj.spans:
-                if proj.text[span.start : span.end] != SENTINEL:
+                if span.sentinel_start - span.ordinal != span.patch_boundary:
+                    stats["fail"] += 1
+                    failures.append(
+                        f"{os.path.basename(path)} {loc}: span {span.ordinal} sentinel/patch "
+                        f"coordinates disagree ({span.sentinel_start} - {span.ordinal} != "
+                        f"{span.patch_boundary})"
+                    )
+                if proj.sentinel_text[span.start : span.end] != SENTINEL:
                     stats["fail"] += 1
                     failures.append(
                         f"{os.path.basename(path)} {loc}: span {span.ordinal} at "

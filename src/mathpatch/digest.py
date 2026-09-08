@@ -28,7 +28,7 @@ import hashlib
 
 from lxml import etree
 
-from .spans import ProtectedMathSpan
+from .spans import MathSegment, ProtectedMathSpan
 
 C14N_KWARGS: dict[str, bool] = {"exclusive": True, "with_comments": True}
 
@@ -45,7 +45,7 @@ def digest(el: etree._Element) -> str:
 
 def span_digest(span: ProtectedMathSpan | etree._Element) -> str:
     """sha256 of a protected span's canonical serialization."""
-    el = span.element if isinstance(span, ProtectedMathSpan) else span
+    el = span.source_element if isinstance(span, MathSegment) else span
     return digest(el)
 
 

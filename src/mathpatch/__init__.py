@@ -11,12 +11,14 @@ from __future__ import annotations
 
 from .canonical import (
     CANONICAL_TEXT_CONTRACT_VERSION,
+    ParagraphProjection,
     Projection,
     SentinelCollision,
     canonical_text,
     crosses_math_boundary,
     intersects_math,
     math_spans,
+    patch_text,
     project,
 )
 from .digest import (
@@ -34,12 +36,18 @@ from .digest import (
     span_fingerprint,
 )
 from .spans import (
+    BENIGN_TAGS,
     MATH_TAGS,
     OMATH,
     OMATHPARA,
     SENTINEL,
     M_NS,
+    MathSegment,
+    OpaqueSegment,
     ProtectedMathSpan,
+    Segment,
+    TextPiece,
+    TextSegment,
     W_NS,
     has_math,
     outermost_math,
@@ -49,6 +57,14 @@ from .spans import (
 __version__ = "0.1.0"
 
 __all__ = [
+    "patch_text",
+    "TextSegment",
+    "TextPiece",
+    "Segment",
+    "ParagraphProjection",
+    "OpaqueSegment",
+    "MathSegment",
+    "BENIGN_TAGS",
     "CANONICAL_TEXT_CONTRACT_VERSION",
     "BoundaryCrossing",
     "C14N_KWARGS",
