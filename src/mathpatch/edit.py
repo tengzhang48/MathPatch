@@ -172,7 +172,9 @@ def apply_math_text_edit(
     """Apply one authorized `m:t` text swap to a paragraph, in place.
 
     Refuses -- mutating nothing -- when the span or target does not exist, when the
-    preimage does not match, or when the edit is a no-op or would empty the node.
+    preimage does not match, when the edit is a no-op or would empty the node, and also
+    when the post-mutation containment check fails: EVERY refusal path restores the
+    document exactly, including the fail-closed guard.
     Emptying an `m:t` or removing it is a STRUCTURAL edit and belongs to M2b, not here:
     it would renumber the span's text ordinals.
     """
@@ -214,18 +216,46 @@ def apply_math_text_edit(
 
     skeleton_before = skeleton_digest(span, edit.text_ordinal)
 
-    target.element.text = edit.new_text
-    # Keep xml:space if it was declared, add it if the new text needs it, never remove it.
-    if edit.new_text != edit.new_text.strip() or target.element.get(XML_SPACE):
-        target.element.set(XML_SPACE, "preserve")
+    # ATOMIC, unconditionally for anything inside the span. Restoring only the intended
+    # target's text and attribute is not enough: a writer bug that touched a DIFFERENT
+    # node would be caught by the guard below and then left in place. Both failures were
+    # observed before this was fixed -- the guard reported a refusal while the paragraph
+    # kept ['E','G','m'].
+    #
+    # So the whole span's content is snapshotted and, on any failure, restored. The span
+    # ELEMENT keeps its identity (a caller may hold `source_element` from an earlier
+    # projection); its children are replaced by the snapshot, so a caller must re-project
+    # after a refusal -- which it must do anyway.
+    span_el = span.source_element
+    saved_children = [copy.deepcopy(child) for child in span_el]
+    saved_text_content = span_el.text
+    saved_attrib = dict(span_el.attrib)
 
-    after = project(p).math_segments[edit.span_ordinal]
-    skeleton_after = skeleton_digest(after, edit.text_ordinal)
-    if skeleton_after != skeleton_before:
-        raise AssertionError(
-            "the edit changed something other than the target's text; refusing to "
-            "report success"
-        )
+    def restore() -> None:
+        for child in list(span_el):
+            span_el.remove(child)
+        for child in saved_children:
+            span_el.append(copy.deepcopy(child))
+        span_el.text = saved_text_content
+        span_el.attrib.clear()
+        span_el.attrib.update(saved_attrib)
+
+    try:
+        target.element.text = edit.new_text
+        # Keep xml:space if declared, add it if the new text needs it, never remove it.
+        if edit.new_text != edit.new_text.strip() or target.element.get(XML_SPACE):
+            target.element.set(XML_SPACE, "preserve")
+
+        after = project(p).math_segments[edit.span_ordinal]
+        skeleton_after = skeleton_digest(after, edit.text_ordinal)
+        if skeleton_after != skeleton_before:
+            raise AssertionError(
+                "the edit changed something other than the target's text; refusing to "
+                "report success"
+            )
+    except BaseException:
+        restore()
+        raise
 
     return MathTextReceipt(
         applied=True,

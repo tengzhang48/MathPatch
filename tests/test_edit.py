@@ -239,3 +239,146 @@ class TestReceipt:
         (span,) = math_spans(p)
         with pytest.raises(ValueError):
             apply_math_text_edit(p, MathTextEdit(0, 1, "f", span_digest(span), "f"))
+
+
+class TestAtomicity:
+    """Every refusal path must leave the document exactly as it was.
+
+    The library's promise is "I mutated exactly what you authorized, and nothing else".
+    A refusal that leaves a half-applied edit behind breaks it: a caller catching the
+    error holds a corrupted document believing nothing happened. Verified broken before
+    it was fixed -- the fail-closed guard left ['E','+','m'] as ['E','G','m'].
+    """
+
+    @staticmethod
+    def _paragraph():
+        return para(eq(mr("E"), mr("+"), mr("m", space=True)))
+
+    def test_preimage_refusal_leaves_no_trace(self):
+        p = self._paragraph()
+        (span,) = math_spans(p)
+        before = span_digest(span)
+        with pytest.raises(PreimageMismatch):
+            apply_math_text_edit(p, MathTextEdit(0, 0, "WRONG", before, "G"))
+        assert span_digest(math_spans(p)[0]) == before
+
+    def test_containment_guard_restores_the_target(self, monkeypatch):
+        """Force the guard to fire and require the document to be untouched."""
+        import mathpatch.edit as edit_module
+
+        p = self._paragraph()
+        (span,) = math_spans(p)
+        before_digest = span_digest(span)
+        before_texts = [t.text for t in text_targets(span)]
+
+        real = edit_module.skeleton_digest
+        calls = {"n": 0}
+
+        def flaky(seg, ordinal):
+            calls["n"] += 1
+            return "deadbeef" if calls["n"] > 1 else real(seg, ordinal)
+
+        monkeypatch.setattr(edit_module, "skeleton_digest", flaky)
+        with pytest.raises(AssertionError):
+            apply_math_text_edit(p, MathTextEdit(0, 0, "E", before_digest, "G"))
+
+        assert [t.text for t in text_targets(math_spans(p)[0])] == before_texts
+        assert span_digest(math_spans(p)[0]) == before_digest
+
+    def test_guard_restores_an_absent_xml_space(self, monkeypatch):
+        """Restoring must remove an attribute the edit added, not just reset text."""
+        import mathpatch.edit as edit_module
+
+        p = para(eq(mr("E")))          # no xml:space to begin with
+        (span,) = math_spans(p)
+        before_digest = span_digest(span)
+        real = edit_module.skeleton_digest
+        calls = {"n": 0}
+
+        def flaky(seg, ordinal):
+            calls["n"] += 1
+            return "deadbeef" if calls["n"] > 1 else real(seg, ordinal)
+
+        monkeypatch.setattr(edit_module, "skeleton_digest", flaky)
+        with pytest.raises(AssertionError):
+            apply_math_text_edit(p, MathTextEdit(0, 0, "E", before_digest, " G "))
+
+        t = math_spans(p)[0].source_element.find(
+            "{http://schemas.openxmlformats.org/officeDocument/2006/math}r/"
+            "{http://schemas.openxmlformats.org/officeDocument/2006/math}t"
+        )
+        assert t.get("{http://www.w3.org/XML/1998/namespace}space") is None
+        assert span_digest(math_spans(p)[0]) == before_digest
+
+    def test_no_op_and_empty_refusals_leave_no_trace(self):
+        p = self._paragraph()
+        (span,) = math_spans(p)
+        before = span_digest(span)
+        with pytest.raises(ValueError):
+            apply_math_text_edit(p, MathTextEdit(0, 0, "E", before, "E"))
+        with pytest.raises(ValueError):
+            apply_math_text_edit(p, MathTextEdit(0, 0, "E", before, ""))
+        assert span_digest(math_spans(p)[0]) == before
+
+    def test_guard_restores_even_a_write_to_the_wrong_node(self, monkeypatch):
+        """Restoring only the intended target is not enough: a writer bug that touched a
+        different node would be caught by the guard and then left in place. Observed
+        before the fix -- the refusal kept ['E','G','m']."""
+        import mathpatch.edit as edit_module
+
+        p = para(eq(mr("E"), mr("+"), mr("m")))
+        (span,) = math_spans(p)
+        before_digest = span_digest(span)
+        before_texts = [t.text for t in text_targets(span)]
+
+        real_targets = edit_module.text_targets
+
+        def sabotage(seg):
+            found = real_targets(seg)
+            # simulate a bug: hand back a target list pointing one node to the right
+            if len(found) > 1:
+                return (found[1],) + found[1:]
+            return found
+
+        monkeypatch.setattr(edit_module, "text_targets", sabotage)
+        with pytest.raises((AssertionError, PreimageMismatch)):
+            apply_math_text_edit(p, MathTextEdit(0, 0, "E", before_digest, "G"))
+
+        assert [t.text for t in text_targets(math_spans(p)[0])] == before_texts
+        assert span_digest(math_spans(p)[0]) == before_digest
+
+
+class TestOrdinalDriftIsCaught:
+    """text_ordinal counts NON-EMPTY m:t, so filling an empty one renumbers them.
+
+    The address alone would then point at a different node. It is the span digest in the
+    preimage that protects against this -- any change to the equation, including filling
+    an empty text node, changes the digest and refuses the edit. This tests that the
+    protection actually holds rather than assuming it.
+    """
+
+    def test_filling_an_empty_m_t_shifts_ordinals(self):
+        empty = para(
+            "<m:oMath><m:r><m:t></m:t></m:r>" + mr("E") + mr("f") + "</m:oMath>"
+        )
+        assert [t.text for t in text_targets(math_spans(empty)[0])] == ["E", "f"]
+        filled = para("<m:oMath>" + mr("Q") + mr("E") + mr("f") + "</m:oMath>")
+        assert [t.text for t in text_targets(math_spans(filled)[0])] == ["Q", "E", "f"]
+
+    def test_a_digest_authorized_before_the_fill_is_refused_after(self):
+        p = para("<m:oMath><m:r><m:t></m:t></m:r>" + mr("E") + mr("f") + "</m:oMath>")
+        (span,) = math_spans(p)
+        stale = span_digest(span)
+        assert text_targets(span)[0].text == "E"
+
+        # something fills the empty node; ordinal 0 now means a different element
+        empty_t = span.source_element.find(
+            "{http://schemas.openxmlformats.org/officeDocument/2006/math}r/"
+            "{http://schemas.openxmlformats.org/officeDocument/2006/math}t"
+        )
+        empty_t.text = "Q"
+        assert text_targets(math_spans(p)[0])[0].text == "Q"
+
+        with pytest.raises(PreimageMismatch) as exc:
+            apply_math_text_edit(p, MathTextEdit(0, 0, "E", stale, "G"))
+        assert "digest" in str(exc.value).lower()

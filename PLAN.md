@@ -536,6 +536,47 @@ address one `m:t` inside a span, and (b) a preimage-verified text swap that touc
 nothing else. The AST becomes necessary only for a STRUCTURAL edit — adding a subscript
 where none existed — which is the second cut, not the first.
 
+### F17 — A refusal must leave the document untouched, and did not
+
+Found in the fourth self-audit, attacking M2a's failure paths rather than its happy path.
+`apply_math_text_edit` documented itself as refusing "mutating nothing", and that was false
+for one path: its own fail-closed containment guard. Observed before fixing --
+
+    texts before refusal: ['E', '+', 'm']
+    texts after  refusal: ['E', 'G', 'm']       span digest changed: True
+
+A caller catching that error would hold a corrupted document believing nothing had
+happened, which breaks the one guarantee the package exists to make.
+
+Fixed in two stages, because the first was not enough:
+
+1. Snapshot the target's text and `xml:space`, restore on any failure. That covers the
+   ordinary paths.
+2. **Not sufficient.** A writer bug that touches a *different* node is caught by the guard
+   and then left in place -- restoring only the intended target cannot undo it. So the
+   whole span's content is snapshotted (children, text, attributes) and restored on any
+   failure. The span element keeps its identity, since a caller may hold
+   `source_element` from an earlier projection; its children are replaced, so a caller
+   must re-project after a refusal -- which it must do anyway.
+
+Both stages are regression-tested by forcing the guard with `monkeypatch`, including the
+case where the edit added an `xml:space` that restoration has to remove again.
+
+### Whole-document round trip (verified 2026-09-08)
+
+The first check that anything survives serialization of a complete part. Mutating one
+`m:t` in Hierarchical Jamming, then serializing all of `word/document.xml`, reparsing, and
+comparing every paragraph by C14N digest:
+
+    paragraphs: 933 -> 933
+    paragraphs whose C14N digest changed: [14]      <- only the target's
+    repacked zip: part list identical, reparses
+    every OTHER part payload-identical: True
+
+So Tier 1 and Tier 2 both hold at document level for an equation mutation. What is still
+unproven is that **Word opens the result and renders the equation correctly** -- that is
+M2c, and no amount of XML checking substitutes for it.
+
 ### Reading the ArtifactCert tree (discipline, learned the hard way)
 
 This plan's findings were wrong three times because they were read off the wrong tree: first a
@@ -1190,6 +1231,7 @@ payload hashes, protected-span C14N digests, ArtifactCert binding re-verificatio
         measure_math_refusals.py   # answered M1 item 4: 0 of 364
         oracle_acceptance.py       # M1 item 2 acceptance: 44/44 real, F15 found
         omml_inventory.py          # F16: scopes the reader from real documents
+        edit_acceptance.py         # M2a on all 2370 real m:t, 4 replacement shapes
     tests/
         fixtures/descent.docx   # generated; the only source of wrapper-nested math
 

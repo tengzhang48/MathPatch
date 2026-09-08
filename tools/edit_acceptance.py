@@ -130,7 +130,20 @@ def main(argv: list[str]) -> int:
                     except Exception:
                         digest_isolated = False
 
-                    new = old + "′" if old != "′" else "Z"  # prime, a real math char
+                    # Vary the replacement shape. Only ever appending a character left
+                    # shorter, whitespace-padded and same-length swaps unexercised.
+                    shape = counts["targets exercised"] % 4
+                    if shape == 0:
+                        new = old + "′"                 # longer, real math char
+                    elif shape == 1:
+                        new = old[:-1] or "Z"           # shorter (or minimal)
+                    elif shape == 2:
+                        new = " " + old.strip() + " "   # whitespace-padded
+                    else:
+                        new = "Z" * len(old)            # same length, different text
+                    if new == old:
+                        new = old + "″"
+                    classes[f"shape:{shape}"] += 1
                     try:
                         receipt = apply_math_text_edit(
                             p,
