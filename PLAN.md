@@ -859,7 +859,9 @@ Naming the tag does that; a shared `opaque` bucket with hidden policy behind it 
 4. **Drift.** `patch_text == artifactcert.docx_manifest._para_text(p)`, byte for byte, on every
    paragraph of the corpus. This is the existing gate and it stays.
 5. **Total, non-overlapping math.** Every math element in the paragraph is exactly one
-   `MathSegment` or a descendant of exactly one. `m:oMathPara` is one segment, never two.
+   `MathSegment` or a descendant of exactly one. `m:oMathPara` is one segment, never two. Both
+   halves are checked: coverage catches under-reporting, and a nesting check catches
+   double-counting. The non-overlap half was untested until the implementation self-audit.
 6. **Ordinals.** `MathSegment.ordinal` runs 0..n-1 in document order and indexes
    `math_segments`.
 7. **The crossing rule is the consumer's.** `crosses_math_boundary(start, end)` returns exactly
@@ -892,6 +894,34 @@ Naming the tag does that; a shared `opaque` bucket with hidden policy behind it 
 15. **Piece partition.** Within a `TextSegment`, the `TextPiece` ranges are ordered,
     non-overlapping, and concatenate to exactly `TextSegment.text`; every character of the
     segment belongs to exactly one piece.
+
+### Self-audit of the implementation (2026-09-08)
+
+Mutation-testing the drift gate after the refactor found **two blind spots**, both now closed.
+Each mutation was verified to have applied before its result was believed.
+
+- **Segment extents were unchecked on real documents.** `patch_text` is *built* by joining the
+  text segments, so comparing it against `_para_text` cannot detect corrupted extents. A
+  mutation breaking every `patch_start`/`patch_end`/`patch_boundary` while leaving `patch_text`
+  intact **passed the gate**. Invariants 1, 2, 3 and 15 were only ever exercised on synthetic
+  fixtures — and they are exactly the fields ArtifactCert will consume for its run coordinates.
+  The gate now validates the text partition, the piece partition, and that zero-width boundaries
+  lie in range. That mutation now yields FAIL=19; a corrupted `TextPiece` offset yields FAIL=107.
+- **Span non-overlap was unchecked.** Coverage ("every math element is a span or inside one")
+  detects *under*-reporting only. Double-counting an `m:oMathPara` with its inner `m:oMath`
+  satisfies coverage perfectly and inflated the span count 98 → 123 **undetected** — the exact
+  bug outermost-only discovery exists to prevent (F11). The gate now asserts no span is nested
+  inside another, and a unit test cross-checks the count against `outermost_math` computed
+  independently of the projection. That mutation now yields FAIL=25.
+
+One further fail-open path was closed rather than left: `flush()` silently discarded text
+buffered with no enclosing run, which would have made a traversal bug look like missing text. It
+now raises, and the gate reports it as a finding instead of crashing.
+
+A third mutation initially looked like a blind spot and was not one — with the silent discard in
+place it was behaviourally inert, so it never produced the leak it was meant to simulate. Worth
+recording because "the gate passed" and "the mutation did nothing" are indistinguishable without
+checking, and only one of them is a finding.
 
 ### What this model deliberately does not have
 

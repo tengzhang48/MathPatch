@@ -8,6 +8,12 @@ section 2 -- but the projection is useless at the seam unless it agrees with it.
 The property proved here:
 
   every paragraph -> `patch_text` is byte-identical to `_para_text`
+  every paragraph -> the segments PARTITION `patch_text`: text extents are ordered,
+                     contiguous, and cover it exactly; non-text segments are zero-width
+                     and in range; each segment's `TextPiece`s partition its own text
+  every paragraph -> math spans do not OVERLAP: no span's element is a descendant of
+                     another's (coverage alone catches under-reporting, not
+                     double-counting -- an `m:oMathPara` wrapping an `m:oMath`)
   math paragraph  -> the derived `sentinel_text` carries exactly one sentinel per
                      discovered span, each span's sentinel offset landing on one,
                      and `sentinel_start - ordinal == patch_boundary`
@@ -127,9 +133,9 @@ def main(argv: list[str]) -> int:
             ac = paragraph_text(p)
             try:
                 proj = project(p)
-            except SentinelCollision as exc:
+            except (SentinelCollision, AssertionError) as exc:
                 stats["fail"] += 1
-                failures.append(f"{os.path.basename(path)} {loc}: {exc}")
+                failures.append(f"{os.path.basename(path)} {loc}: {type(exc).__name__}: {exc}")
                 stats["paras"] += 1
                 continue
             stats["paras"] += 1
@@ -175,6 +181,71 @@ def main(argv: list[str]) -> int:
                 )
             # Hold strong references while comparing: id() on a collected lxml
             # proxy can be reused by a new proxy for a different node.
+            # --- segment partition (invariants 1, 2, 3, 15) ---
+            # patch_text is BUILT by joining the text segments, so comparing it against
+            # _para_text cannot detect corrupted extents: a mutation that broke every
+            # patch_start/patch_end while leaving patch_text intact passed this gate.
+            cursor = 0
+            for seg in proj.text_segments:
+                if seg.patch_start != cursor or seg.patch_end - seg.patch_start != len(seg.text):
+                    stats["fail"] += 1
+                    failures.append(
+                        f"{os.path.basename(path)} {loc}: text segment at "
+                        f"[{seg.patch_start},{seg.patch_end}) breaks the partition "
+                        f"(expected start {cursor}, len {len(seg.text)})"
+                    )
+                    break
+                piece_cursor = 0
+                for piece in seg.pieces:
+                    if piece.local_start != piece_cursor or piece.local_end <= piece.local_start:
+                        stats["fail"] += 1
+                        failures.append(
+                            f"{os.path.basename(path)} {loc}: TextPiece "
+                            f"[{piece.local_start},{piece.local_end}) breaks the piece partition"
+                        )
+                        break
+                    piece_cursor = piece.local_end
+                else:
+                    if seg.pieces and piece_cursor != len(seg.text):
+                        stats["fail"] += 1
+                        failures.append(
+                            f"{os.path.basename(path)} {loc}: pieces cover {piece_cursor} "
+                            f"of {len(seg.text)} characters"
+                        )
+                cursor = seg.patch_end
+            else:
+                if cursor != len(proj.patch_text):
+                    stats["fail"] += 1
+                    failures.append(
+                        f"{os.path.basename(path)} {loc}: text segments cover {cursor} "
+                        f"of {len(proj.patch_text)} characters"
+                    )
+
+            for seg in proj.math_segments + proj.opaque_segments:
+                if not 0 <= seg.patch_boundary <= len(proj.patch_text):
+                    stats["fail"] += 1
+                    failures.append(
+                        f"{os.path.basename(path)} {loc}: zero-width segment boundary "
+                        f"{seg.patch_boundary} outside patch text of length "
+                        f"{len(proj.patch_text)}"
+                    )
+
+            # --- math spans must not overlap (invariant 5, the untested half) ---
+            span_ids = [id(s.source_element) for s in proj.spans]
+            span_els = [s.source_element for s in proj.spans]  # keep proxies alive
+            for outer in span_els:
+                for descendant in outer.iterdescendants():
+                    if id(descendant) in span_ids:
+                        stats["fail"] += 1
+                        failures.append(
+                            f"{os.path.basename(path)} {loc}: a math span is nested inside "
+                            "another -- double-counted (oMathPara/oMath)"
+                        )
+                        break
+                else:
+                    continue
+                break
+
             covered_els = [d for s in proj.spans for d in s.element.iter()]
             all_els = list(p.iter())
             covered = {id(d) for d in covered_els}

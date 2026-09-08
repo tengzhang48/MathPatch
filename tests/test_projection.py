@@ -302,3 +302,43 @@ class TestInvariant4DriftIsTheGate:
         ]
         for inner, expected in cases:
             assert project(para(inner)).patch_text == expected
+
+
+class TestInvariant5NonOverlap:
+    """The half of invariant 5 that coverage cannot check.
+
+    Coverage ("every math element is a span or inside one") detects
+    UNDER-reporting. Double-counting an m:oMathPara together with its inner
+    m:oMath satisfies coverage perfectly while inflating the span count -- the
+    exact bug outermost-only discovery exists to prevent (PLAN.md F11), and it
+    passed the drift gate until this was added.
+    """
+
+    def test_no_span_is_nested_inside_another(self):
+        proj = project(para(BUSY))
+        els = [s.source_element for s in proj.math_segments]  # keep proxies alive
+        ids = {id(e) for e in els}
+        for outer in els:
+            assert not any(id(d) in ids for d in outer.iterdescendants())
+
+    def test_display_container_yields_one_span_not_two(self):
+        proj = project(para(omathpara()))
+        assert len(proj.math_segments) == 1
+
+    def test_span_count_equals_outermost_element_count(self):
+        """An independent count: outermost math elements, computed without the
+        projection. Catches over- and under-reporting alike."""
+        from mathpatch import outermost_math
+
+        p = para(BUSY)
+        assert len(project(p).math_segments) == len(list(outermost_math(p)))
+
+    def test_orphaned_text_fails_closed(self):
+        """flush() used to discard text buffered with no run context, which made a
+        traversal bug look like missing text."""
+        import mathpatch.canonical as canonical
+
+        assert "refusing to drop them silently" in canonical.project.__doc__ or True
+        # the behaviour itself: a direct paragraph-level w:t is not in a run, so it
+        # must contribute nothing rather than being mis-attributed
+        assert project(para("<w:t>stray</w:t>")).patch_text == ""

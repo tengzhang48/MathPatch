@@ -138,9 +138,18 @@ def project(p: etree._Element) -> ParagraphProjection:
 
     def flush() -> None:
         nonlocal patch_offset, buf, pieces
-        if run_el is None or not buf:
-            buf, pieces = [], []
+        if not buf:
+            pieces = []
             return
+        if run_el is None:
+            # Text accumulated with no enclosing direct run. Unreachable by design --
+            # `in_direct_run` is only true inside a branch that sets `run_el` -- but
+            # silently discarding it would hide a traversal bug as missing text, so it
+            # fails closed instead. (A mutation test relied on this being silent.)
+            raise AssertionError(
+                f"traversal bug: {len(''.join(buf))} characters buffered with no run "
+                "context; refusing to drop them silently"
+            )
         text = "".join(buf)
         if SENTINEL in text:
             raise SentinelCollision(
