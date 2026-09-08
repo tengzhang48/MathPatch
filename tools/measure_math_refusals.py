@@ -10,14 +10,26 @@ building is narrower:
     that cross a math boundary and cannot be expressed as deletions?
 
 This classifies every `change_spec_items` row in a real ledger by replaying the exact
-decision path of the pinned ArtifactCert engine:
+decision path of the pinned ArtifactCert engine (engine.py around line 644):
 
-    verdict = safety.analyze_paragraph(p, span_start, span_end)
-    if verdict.ok                                    -> applies directly
-    elif refusal is PATCH_NOT_SAFE_MATH_IN_TARGET and operation is replace:
-         _apply_deletion_only_diff_around_structure  -> applies via decomposition
-         else                                        -> REFUSED (the M1 question)
-    else                                             -> refused for another reason
+    if operation is replace:
+        edit_start, edit_end, edit_text = narrow_to_changed_middle(
+            text, post_state, span_start, span_end)      # <-- SAFETY FOLLOWS THIS
+    verdict = safety.analyze_paragraph(p, edit_start, edit_end)
+    if verdict.ok                                        -> applies directly
+    elif replace and the middle is a pure insertion and the refusal is a
+         citation/field one and _insert_beside_unchanged_protected_text succeeds
+                                                          -> applies beside protected text
+    elif replace and refusal is PATCH_NOT_SAFE_MATH_IN_TARGET and
+         _apply_deletion_only_diff_around_structure(FULL span) succeeds
+                                                          -> applies via decomposition
+    else                                                  -> refused
+
+The narrowing step is essential and an earlier version of this tool omitted it, which
+made its answer an UPPER BOUND rather than the engine's result. Safety follows only the
+characters that actually change, so a reviewer-quoted phrase may span an equation while
+the changed middle does not -- "where [eq] gives the result" with only "gives"->"yields"
+changing is accepted by the real engine.
 
 Buckets reported:
 
@@ -39,6 +51,7 @@ from __future__ import annotations
 import copy
 import os
 import sqlite3
+import subprocess
 import sys
 import zipfile
 from collections import Counter
@@ -53,6 +66,7 @@ BUCKETS = [
     "replacement crossing math",
     "refused for another reason",
     "preimage not locatable",
+    "no-op (nothing changes)",
 ]
 
 
@@ -65,8 +79,8 @@ def load_paragraphs(docx_path: str, enumerate_paragraphs, parse_untrusted_xml):
 
 
 def classify_ledger(path: str, mods) -> tuple[Counter, Counter, list[str]]:
-    (enumerate_paragraphs, paragraph_text, parse_untrusted_xml,
-     safety, deletion_apply, crosses_math_boundary) = mods
+    (enumerate_paragraphs, paragraph_text, parse_untrusted_xml, safety,
+     deletion_apply, insert_beside, narrow, crosses_math_boundary) = mods
 
     counts: Counter = Counter()
     other: Counter = Counter()
@@ -111,31 +125,55 @@ def classify_ledger(path: str, mods) -> tuple[Counter, Counter, list[str]]:
             continue
         start = text.index(pre)
         end = start + len(pre)
+        post = row["post_state"] or ""
+        op = row["operation"]
 
-        # does this paragraph have math at all, and does the extent cross a boundary?
-        crossing = crosses_math_boundary(p, start, end)
+        # THE STEP THE EARLIER VERSION MISSED: safety follows the changed middle.
+        if op == "replace":
+            edit_start, edit_end, edit_text = narrow(text, post, start, end)
+        else:
+            edit_start, edit_end, edit_text = start, end, post
+
+        if op == "replace" and edit_start == edit_end and not edit_text:
+            counts["no-op (nothing changes)"] += 1
+            continue
+
         from mathpatch import math_spans
         has_math = bool(math_spans(p))
+        crossing = crosses_math_boundary(p, edit_start, edit_end)
 
-        verdict = safety.analyze_paragraph(p, start, end)
+        verdict = safety.analyze_paragraph(p, edit_start, edit_end)
         if verdict.ok:
             counts["no math in paragraph" if not has_math else "outside the math boundary"] += 1
             continue
 
+        # accepted path: a pure insertion beside protected citation/field text
         if (
-            row["operation"] == "replace"
-            and verdict.refusal_code == "PATCH_NOT_SAFE_MATH_IN_TARGET"
+            op == "replace"
+            and edit_start == edit_end
+            and edit_text
+            and verdict.refusal_code in {
+                "PATCH_PROTECTED_CITATION_MANAGER_FIELD",
+                "PATCH_NOT_SAFE_FIELD_IN_TARGET",
+            }
+            and insert_beside(
+                copy.deepcopy(p), full_start=start, full_end=end,
+                position=edit_start, insertion=edit_text,
+            )
         ):
-            # the decomposition MUTATES the paragraph; never let it touch the cache
+            counts["no math in paragraph" if not has_math else "outside the math boundary"] += 1
+            continue
+
+        if op == "replace" and verdict.refusal_code == "PATCH_NOT_SAFE_MATH_IN_TARGET":
+            # the decomposition uses the FULL authorized span, and MUTATES: deepcopy.
+            # Exceptions are NOT swallowed -- a tool bug must not masquerade as a
+            # genuine cross-equation refusal.
             probe = copy.deepcopy(p)
-            try:
-                worked = deletion_apply(probe, text, start, end, row["post_state"] or "")
-            except Exception:
-                worked = False
+            worked = deletion_apply(probe, text, start, end, post)
             counts["deletion around math" if worked else "replacement crossing math"] += 1
             if not worked:
                 notes.append(
-                    f"{row['locator']}: replacement crosses "
+                    f"{row['locator']}: changed middle [{edit_start},{edit_end}) crosses "
                     f"{len(crossing)} boundary(ies), not expressible as deletions"
                 )
             continue
@@ -156,17 +194,49 @@ def main(argv: list[str]) -> int:
     if not ac_src or not (Path(ac_src) / "artifactcert" / "docx_manifest.py").is_file():
         print("set ARTIFACTCERT_SRC to a pinned ArtifactCert src/ tree", file=sys.stderr)
         return 2
+
+    # This tool claims to replay "the pinned engine". Verify that, rather than trusting
+    # whatever tree happens to sit at ARTIFACTCERT_SRC -- three findings in this project
+    # were wrong for exactly that reason.
+    root = Path(__file__).resolve().parents[1]
+    expected = next(
+        line.strip()
+        for line in (root / "INTEGRATION_TARGET.txt").read_text().splitlines()
+        if line.strip() and not line.startswith("#")
+    )
+    try:
+        actual = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=Path(ac_src).parent,
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError) as exc:
+        print(f"cannot read ArtifactCert HEAD at {ac_src}: {exc}", file=sys.stderr)
+        return 3
+    if actual != expected:
+        print(
+            f"REFUSED: ArtifactCert at {ac_src} is {actual}, not the pinned {expected}. "
+            "This measurement is only meaningful against the pinned engine.",
+            file=sys.stderr,
+        )
+        return 3
+    print(f"pinned engine verified: {actual}")
     sys.path.insert(0, ac_src)
 
     from artifactcert.docx_manifest import enumerate_paragraphs, paragraph_text
     from artifactcert.docx_patch import safety
-    from artifactcert.docx_patch.engine import _apply_deletion_only_diff_around_structure
+    from artifactcert.docx_patch.engine import (
+        _apply_deletion_only_diff_around_structure,
+        _insert_beside_unchanged_protected_text,
+        narrow_to_changed_middle,
+    )
     from artifactcert.opc_xml import parse_untrusted_xml
 
     from mathpatch import crosses_math_boundary
 
-    mods = (enumerate_paragraphs, paragraph_text, parse_untrusted_xml,
-            safety, _apply_deletion_only_diff_around_structure, crosses_math_boundary)
+    mods = (enumerate_paragraphs, paragraph_text, parse_untrusted_xml, safety,
+            _apply_deletion_only_diff_around_structure,
+            _insert_beside_unchanged_protected_text,
+            narrow_to_changed_middle, crosses_math_boundary)
 
     total: Counter = Counter()
     total_other: Counter = Counter()

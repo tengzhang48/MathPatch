@@ -355,6 +355,39 @@ renumbered casually — live findings may already reference them — so the reso
 binding decision, not a renumbering, and it must not introduce a third address scheme.
 
 
+### F12 — Content+placement equality would refuse correct patches
+
+The first protected-math oracle here was `paragraph_fingerprint` equality over
+`(kind, ordinal, patch_boundary, path, digest)`. That is wrong, and the tests missed it because
+the "stable under an unrelated edit" case edited text *after* the equation, where the boundary
+does not move.
+
+The counterexample is an ordinary authorized edit:
+
+    before  "The result "           [eq] " is..."     patch_boundary 11
+    after   "The numerical result " [eq] " is..."     patch_boundary 21
+
+Same OMML, same `source_path`, same `ordinal` — the equation has not moved at all — but more
+text precedes it, so its boundary shifts and fingerprint equality fails. M1 would have reported
+that the equation moved and refused a correct patch.
+
+So the oracle is split in two:
+
+- **`paragraph_identity`** = `(kind, ordinal, source_path, c14n_digest)` per span. Compared for
+  equality; invariant under any authorized prose edit; still catches a genuine move, because a
+  move changes `source_path` (and usually the ordinal).
+- **`expected_boundaries(before_spans, edits)`** = where each boundary must land, computed from
+  the authorized changed middles. A boundary shifts by the net length delta of every edit ending
+  at or before it, is unaffected by edits beginning at or after it, and an edit strictly
+  containing one raises `BoundaryCrossing`. Compared against `actual_boundaries` after the patch.
+
+Together: the equations are the same equations, unchanged, in the same structural places, sitting
+exactly where the authorized text transformation implies. `span_fingerprint` survives as a
+diagnostic snapshot and is documented as *not* a cross-patch oracle.
+
+This is only simple because generalized holes were dropped — a successful edit extent never
+crosses a boundary, so the transform is a sum of deltas rather than a splice model.
+
 ### Reading the ArtifactCert tree (discipline, learned the hard way)
 
 This plan's findings were wrong three times because they were read off the wrong tree: first a
@@ -618,55 +651,60 @@ proposed changing ArtifactCert's canonical text first.
    That still gives one traversal, so F6 cannot recur, without moving symbol policy across the
    boundary.
 
-2. **Add protected-span verification to the existing patch path — fingerprint, not just
-   digest.** ArtifactCert calls MathPatch to inventory math spans in the already-located
-   paragraph before and after an ordinary patch, and requires `paragraph_fingerprint` equality:
-   same span **count, order, content digest, patch-coordinate position, and structural path**.
+2. **Add protected-math verification to the existing patch path — identity plus a boundary
+   transform, not fingerprint equality.** Before and after an ordinary patch, ArtifactCert
+   requires:
 
-   A digest alone is insufficient, and demonstrably so. C14N is a *content* oracle — exclusive
-   canonicalization is deliberately insensitive to surrounding namespace context — so it cannot
-   see a move:
+   ```
+   paragraph_identity(after) == paragraph_identity(before)
+   actual_boundaries(after)  == expected_boundaries(before, authorized_changed_middles)
+   ```
 
-       before:  A [eq] B          after:  A B [eq]
+   The first is equality of `(kind, ordinal, source_path, c14n_digest)` per span and is invariant
+   under prose edits. The second predicts where each zero-width boundary must land. Requiring
+   `patch_boundary` equality instead would refuse correct patches — see F12, which is why the
+   oracle is shaped this way.
 
-   Patch text is `"AB"` both times (math is zero width), the span count, the ordinal and the
-   C14N digest are all identical, and the equation has moved
-   (`tests/test_digest.py::test_moved_equation_defeats_digest_only`). Adding `patch_boundary`
-   and `path` closes it.
-
-   With that, `safety.py`'s "the regression report still proves that its XML stayed put" becomes
-   true. It changes no coordinate space and no stored identity.
+   This closes the count-vs-content gap of section 1(1): today the regression report records only
+   a document-wide `oMath` count, so `safety.py`'s "the regression report still proves that its
+   XML stayed put" claims more than the code establishes. It changes no coordinate space and no
+   stored identity.
 
 3. **Collapse the remaining duplicate run/offset computations** so MathPatch and ArtifactCert
    cannot drift (F6).
 
-4. **Measure what is still refused — ANSWERED 2026-09-07, and the answer is "2".**
-   `tools/measure_math_refusals.py` replays the pinned engine's exact decision path over every
+4. **Measure what is still refused — ANSWERED, and the answer is ZERO.**
+   `tools/measure_math_refusals.py` replays the pinned engine's decision path over every
    `change_spec_items` row in the real ledgers — 364 authorized edits across three projects:
 
    | bucket | count | |
    |---|---|---|
-   | no math in the paragraph | 313 | works |
-   | outside the math boundary | 40 | works |
+   | no math in the paragraph | 319 | works |
+   | outside the math boundary | 42 | works |
    | deletion around math (decomposition) | 2 | works |
-   | **replacement crossing math** | **2** | **refused** |
-   | refused for a non-math reason | 7 | not a math problem |
-   | preimage not locatable | 0 | |
+   | **replacement crossing math** | **0** | **nothing is blocked** |
+   | refused for a non-math reason | 1 | comment anchor |
+   | not locatable / no-op | 0 | |
 
-   51 of the 364 edits touch a math-bearing paragraph. Exactly **2** are blocked by the
-   cross-equation replacement case, **0.5% of all authorized edits**, and both are the same
-   locator (`body/p/309`) in one manuscript.
+   **363 of 364 authorized edits already apply**, and not one is blocked by the
+   cross-equation replacement case. **Generalized holes are conclusively unjustified and will
+   not be built.**
 
-   **Therefore generalized holes are NOT justified and will not be built.** Two edits in the
-   entire correction history belong to Word or to a human; complicating the seam for them would
-   buy 0.5% while delaying the capability nothing else has. This is the measurement deciding the
-   scope, which is what it was for.
+   **CORRECTION (first run said "2").** The first version of this tool handed the FULL
+   reviewer-quoted span to `safety.analyze_paragraph`. The engine does not: for a replacement it
+   first calls `narrow_to_changed_middle` and safety follows only the characters that actually
+   change (`engine.py:644-651` — *"Unchanged citation/math context in the human-approved quote
+   stays untouched"*). A quoted phrase may span an equation while the changed middle does not:
+   `"where [eq] gives the result"` with only `gives`→`yields` changing is accepted. So "2 of 364"
+   was an upper bound produced by a tool that did not replay the path it claimed to. With
+   narrowing applied, both of those become "outside the math boundary", and 6 of the 7 non-math
+   refusals resolve too (via narrowing and the insert-beside-protected-text path).
 
-   Incidental finding: the deletion-only decomposition fires just twice in the whole history, so
-   it is a real but rare path. And the 7 non-math refusals are
-   `PATCH_NOT_SAFE_COMMENT_ANCHOR_IN_TARGET` (3), `PATCH_PROTECTED_CITATION_MANAGER_FIELD` (2),
-   `PATCH_NOT_SAFE_SYMBOL_IN_TARGET` (2) — the last confirming that F8's symbol boundary is live
-   in practice, not theoretical.
+   The tool now verifies ArtifactCert's HEAD equals the pin before measuring, and no longer
+   converts an exception into `worked=False` — a tool bug must not masquerade as a genuine
+   refusal.
+
+   Incidental: the deletion decomposition fires exactly twice in the whole history.
 
 Not in M1: the sentinel in persisted text, a new address space (F4), generalized holes.
 
@@ -733,11 +771,16 @@ ParagraphProjection
 
 TextSegment
     source_element  : w:r                # the DIRECT w:r child, not the w:t
-    text_elements   : tuple[w:t, ...]    # what a writer rewrites
     source_path     : tuple[int, ...]
     text            : str
     patch_start     : int
     patch_end       : int                # patch_end - patch_start == len(text)
+    pieces          : tuple[TextPiece, ...]
+
+TextPiece                                # which w:t owns which characters
+    element         : w:t
+    local_start     : int                # offset within TextSegment.text
+    local_end       : int                # absolute = patch_start + local_start
 
 MathSegment
     source_element  : m:oMath | m:oMathPara   # OUTERMOST only
@@ -767,8 +810,14 @@ much cheaper now than after integration.
 **`TextSegment` is per-`w:r`, not per-`w:t`.** ArtifactCert's `RunFragment` is
 `(run, start, end)` over a direct `w:r` child, and the whole point of the segment map is that its
 analyzer and writer stop rebuilding those offsets. So a `TextSegment` maps 1:1 onto a
-`RunFragment`, with `text_elements` exposing the `w:t` nodes a writer actually rewrites (there may
-be several, and `_para_text` reaches nested ones — F6).
+`RunFragment`.
+
+**And it carries `TextPiece` sub-ranges.** A bare tuple of `w:t` elements is not enough: a writer
+must answer *"which text element owns character 13?"* to rewrite minimally, and a run can hold
+several `w:t` nodes (`_para_text` even reaches nested ones — F6). Without the sub-ranges
+ArtifactCert would re-walk the run to find out, recreating a smaller version of the very drift
+this map exists to end. Offsets are **local** to the segment so a segment is self-contained;
+absolute is `patch_start + local_start`.
 
 ### `opaque` means "MathPatch does not interpret this" — never "these are equivalent"
 
@@ -815,9 +864,20 @@ Naming the tag does that; a shared `opaque` bucket with hidden policy behind it 
     cannot place is reported in `anomalies` rather than silently dropped.
 11. **Path identity.** `source_path` uniquely identifies an element's position within the
     paragraph, and two distinct segments never share one.
-12. **Fingerprint sensitivity.** `MathSegment.fingerprint` changes if the equation's contents
-    change, its `patch_boundary` changes, or its `source_path` changes; and does not change when
-    unrelated text in the paragraph is edited.
+12. **Identity invariance.** `paragraph_identity` is unchanged by any authorized prose edit,
+    *including one that changes the length of text before an equation*. The earlier form of this
+    invariant was self-contradictory — it demanded both that the fingerprint change when
+    `patch_boundary` changes and that it not change under an unrelated edit, which conflict
+    exactly when the unrelated edit precedes the equation (F12).
+13. **Identity sensitivity.** `paragraph_identity` changes if an equation's contents change, its
+    `source_path` changes, its `ordinal` changes, or a span appears or disappears.
+14. **Boundary transform.** Boundaries are verified by computation, never by equality:
+    `actual_boundaries(after) == expected_boundaries(before, authorized_changed_middles)`. An
+    edit extent strictly containing a boundary raises `BoundaryCrossing` rather than returning a
+    guess.
+15. **Piece partition.** Within a `TextSegment`, the `TextPiece` ranges are ordered,
+    non-overlapping, and concatenate to exactly `TextSegment.text`; every character of the
+    segment belongs to exactly one piece.
 
 ### What this model deliberately does not have
 

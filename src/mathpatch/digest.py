@@ -54,22 +54,97 @@ def span_digests(spans: tuple[ProtectedMathSpan, ...] | list[ProtectedMathSpan])
     return tuple(span_digest(s) for s in spans)
 
 
+def math_identity(span: ProtectedMathSpan) -> tuple[str, int, tuple[int, ...], str]:
+    """What must NOT change when prose around an equation is edited.
+
+    `(kind, ordinal, source_path, c14n_digest)` -- contents and structural place.
+    Deliberately EXCLUDES `patch_boundary`, because a legitimate authorized edit that
+    changes the length of text *before* an equation moves its boundary without moving
+    the equation:
+
+        before  "The result "      [eq] " is..."      boundary 11
+        after   "The numerical result " [eq] " is..." boundary 21
+
+    Same OMML, same path, same ordinal. An oracle that required boundary equality would
+    report that the equation moved and refuse a correct patch. Boundaries are verified
+    separately, against a computed expectation -- see `expected_boundaries`.
+    """
+    return (span.kind, span.ordinal, span.path, span_digest(span))
+
+
+def paragraph_identity(
+    spans: tuple[ProtectedMathSpan, ...] | list[ProtectedMathSpan],
+) -> tuple[tuple[str, int, tuple[int, ...], str], ...]:
+    """The equality half of the protected-math oracle.
+
+    Equality proves: same span count, same order, same contents, same structural
+    placement. It is invariant under any authorized edit to surrounding prose, so it
+    can be compared directly before and after a patch.
+    """
+    return tuple(math_identity(s) for s in spans)
+
+
+class BoundaryCrossing(ValueError):
+    """An authorized edit extent spans a math boundary.
+
+    The pinned consumer refuses these (`safety.py`: `span_start < offset < span_end`),
+    and MathPatch does not implement generalized holes -- measured unnecessary, 2 of 364
+    real authorized edits. So a crossing extent has no defined boundary transform.
+    """
+
+
+def expected_boundaries(
+    spans: tuple[ProtectedMathSpan, ...] | list[ProtectedMathSpan],
+    edits: tuple[tuple[int, int, int], ...] | list[tuple[int, int, int]],
+) -> tuple[int, ...]:
+    """Where each math boundary MUST land after the given authorized edits.
+
+    `spans` are the BEFORE spans; `edits` are `(start, end, new_length)` triples in
+    BEFORE patch coordinates -- the *changed middles*, not the full reviewer-quoted
+    spans, because that is what the consumer actually rewrites
+    (`engine.narrow_to_changed_middle`).
+
+    A boundary shifts by the net length delta of every edit that ends at or before it,
+    and is unaffected by edits that begin at or after it. An edit strictly containing a
+    boundary raises `BoundaryCrossing`.
+
+    Pair this with `paragraph_identity` equality: together they say the equations are
+    the same equations, unchanged, still in the same structural places, and sitting
+    exactly where the authorized text transformation implies they should.
+    """
+    out: list[int] = []
+    for span in spans:
+        boundary = span.patch_boundary
+        delta = 0
+        for start, end, new_length in edits:
+            if start > end:
+                raise ValueError(f"edit extent [{start}, {end}) is inverted")
+            if start < boundary < end:
+                raise BoundaryCrossing(
+                    f"edit extent [{start}, {end}) strictly contains the math boundary "
+                    f"at {boundary}; generalized holes are not implemented"
+                )
+            if end <= boundary:
+                delta += new_length - (end - start)
+        out.append(boundary + delta)
+    return tuple(out)
+
+
+def actual_boundaries(
+    spans: tuple[ProtectedMathSpan, ...] | list[ProtectedMathSpan],
+) -> tuple[int, ...]:
+    """Observed boundaries, for comparison against `expected_boundaries`."""
+    return tuple(s.patch_boundary for s in spans)
+
+
 def span_fingerprint(span: ProtectedMathSpan) -> tuple[str, int, int, tuple[int, ...], str]:
-    """Content AND placement: `(kind, ordinal, patch_boundary, path, digest)`.
+    """Full observation including `patch_boundary`: `(kind, ordinal, patch_boundary,
+    path, digest)`.
 
-    A C14N digest is a CONTENT oracle, not a LOCATION one -- deliberately, since
-    exclusive canonicalization is insensitive to surrounding namespace context. So
-    digest equality alone does not prove an equation "stayed put":
-
-        before:  A [eq] B          after:  A B [eq]
-
-    Both have patch text "AB" (math is zero width), the same span count, the same
-    ordinal, and the same digest. The equation moved and every content check passes
-    (demonstrated in `tests/test_digest.py::test_moved_equation_defeats_digest_only`).
-
-    Adding `patch_boundary` and `path` makes placement comparable, so
-    `paragraph_fingerprint` equality means: same equations, same contents, same
-    positions in the edit coordinate stream, same structural location.
+    Useful as a diagnostic record of what a span looked like at one moment. NOT an
+    equality oracle across a patch -- use `paragraph_identity` plus
+    `expected_boundaries` for that, because `patch_boundary` legitimately moves when
+    prose before the equation changes length.
     """
     return (
         span.kind,
@@ -83,9 +158,5 @@ def span_fingerprint(span: ProtectedMathSpan) -> tuple[str, int, int, tuple[int,
 def paragraph_fingerprint(
     spans: tuple[ProtectedMathSpan, ...] | list[ProtectedMathSpan],
 ) -> tuple[tuple[str, int, int, tuple[int, ...], str], ...]:
-    """The protected-math oracle: compare this before and after a patch.
-
-    Equality proves span count, order, content, patch-coordinate position, and
-    structural placement all held. Inequality names which of those changed.
-    """
+    """Ordered `span_fingerprint`s. A diagnostic snapshot, not a cross-patch oracle."""
     return tuple(span_fingerprint(s) for s in spans)
