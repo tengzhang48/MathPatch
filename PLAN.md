@@ -484,6 +484,58 @@ Suggested fix on the ArtifactCert side, if it is ever wanted: have safety detect
 below a candidate run, not just among the paragraph's direct children — the same descent-versus-
 scan point as F5.
 
+### F16 — 72% of an equation is Word formatting, and the math vocabulary is tiny
+
+Inventory of every outermost span in the four distinct manuscripts
+(`tools/omml_inventory.py`): 499 spans, 29,220 elements, median 23 elements per span,
+p90 131, max 657, nesting depth up to 13.
+
+**Most of an equation is not mathematics.** Ranked by frequency, the top of the list is
+Word run formatting:
+
+    w:rPr 3239   w:rFonts 3178   w:szCs 1307   w:sz 1250   w:color 1218
+    w:i 1028     w:iCs 935       w:b 932       w:bCs 924   w:smallCaps 920
+    w:strike 920 w:u 920         w:shd 920     w:vertAlign 920
+
+That is roughly **72% of all elements inside equations**, and 920 runs carry a complete
+formatting block — a template applied uniformly. A writer that regenerates a subtree has
+to reproduce all of it exactly; one that mutates the smallest original node preserves it
+for free. This is the strongest available argument for the source-preserving design of
+section 7, and it is measured rather than asserted.
+
+**The structural vocabulary needed is small.** Fifteen element types cover 99.6%:
+
+    leaves        m:r  m:t                      2370 each
+    grouping      m:e                            782
+    scripts       m:sSub + m:sub                 431   <- the most common structure
+                  m:sSup + m:sup                 103
+                  m:sSubSup                       42
+    delimiters    m:d + m:dPr + m:begChr/endChr  166
+    fractions     m:f + m:num + m:den            126
+    n-ary         m:nary + m:naryPr               17
+    radical       m:rad                           17
+    properties    m:ctrlPr 921, m:rPr + m:sty 240
+
+The tail is negligible: `m:jc` 3, `m:box`/`m:boxPr` 2, `m:opEmu` 2, `m:subHide`/`m:supHide`
+1. **No foreign-namespace elements appear inside math at all**, so there is no
+`mc:AlternateContent` complication to handle.
+
+Two details a writer must get right:
+
+- **`m:t/@xml:space="preserve"` on 1,484 of 2,370 `m:t` elements** (63%). Dropping it
+  silently changes spacing.
+- **45 distinct non-ASCII characters**, mostly Greek (ρ τ π θ κ Λ σ μ ε) and operators
+  (× ∙ ≈) — but also **U+2001 EM QUAD (41 occurrences) and U+2009 THIN SPACE (9)**: real
+  spacing characters live inside `m:t`, which matches `docx_view.py`'s own note that
+  "Word writes real spacing characters into equations" (F9).
+
+**This reframes M2's first cut.** The named Phase-2 edits — change one identifier, one
+subscript, one literal, one operator — are, in this corpus, all changes to the text of a
+single `m:t`. So the first useful mutation needs no AST at all: it needs (a) a way to
+address one `m:t` inside a span, and (b) a preimage-verified text swap that touches
+nothing else. The AST becomes necessary only for a STRUCTURAL edit — adding a subscript
+where none existed — which is the second cut, not the first.
+
 ### Reading the ArtifactCert tree (discipline, learned the hard way)
 
 This plan's findings were wrong three times because they were read off the wrong tree: first a
@@ -810,15 +862,38 @@ proposed changing ArtifactCert's canonical text first.
 Not in M1: the sentinel in persisted text, a new address space (F4), generalized holes.
 
 
-### M2 — first native equation patch
+### M2 — first native equation patch (standalone; integration comes after)
 
-Bind one existing Office Math object, parse to a minimal Math AST, apply one narrow
-authorized change (one identifier, one subscript, or one literal), serialize only that
-target back to OMML, and pass both containment and semantic oracles. Math-object addressing
-(F4) enters here, not before.
+**Sequenced by user decision (2026-09-08): finish a standalone, well-tested package first,
+then integrate.** So M1 items 2 and 3 — the ArtifactCert-side wiring — are deferred until
+M2 is done. The oracle they depend on is already built and validated against 44 real
+authorized patches, so nothing is lost by waiting.
 
-Demonstration target: a one-symbol change in a real manuscript equation with all
-surrounding XML preserved.
+Scoped by F16 rather than by OMML's spec.
+
+**M2a — address and swap one `m:t`, source-preserving.** Every named Phase-2 edit in this
+corpus is a change to one `m:t`'s text, so this is the first useful mutation and it needs
+no AST:
+
+- address a single `m:t` within a span, stably (an ordinal among the span's `m:t`
+  elements, plus its structural path);
+- carry an **exact preimage condition** — the expected current text AND the span's C14N
+  digest — and refuse if either no longer matches. ArtifactCert owns authorization;
+  MathPatch owns the deterministic statement *"I mutated exactly the source state the
+  caller said was authorized"*, which is the analogue of its exact-proposal binding;
+- mutate that one `m:t`'s text and nothing else. Preserve `xml:space` (63% of `m:t`
+  carry it), every `w:rPr` block, `m:ctrlPr`, and `m:rPr`/`m:sty`;
+- verify: the target `m:t` changed as intended, every other element in the span is
+  C14N-identical, and the paragraph outside the span passes the existing protection
+  oracle.
+
+**M2b — a source-preserving typed view.** OMML → AST where every node retains its source
+element, covering the fifteen types of F16. Needed for a STRUCTURAL edit (adding a
+subscript where none existed), and for verifying intent semantically rather than
+textually: reparse the patched span and compare its AST to the intended one.
+
+**M2c — the demonstration.** One real manuscript equation, one symbol changed, the
+smallest original node mutated, both oracles green, and the result opened in Word.
 
 ### M3 — construction
 
@@ -1114,6 +1189,7 @@ payload hashes, protected-span C14N digests, ArtifactCert binding re-verificatio
         make_evidence.py           # M0_EVIDENCE.json, fails closed on the pin
         measure_math_refusals.py   # answered M1 item 4: 0 of 364
         oracle_acceptance.py       # M1 item 2 acceptance: 44/44 real, F15 found
+        omml_inventory.py          # F16: scopes the reader from real documents
     tests/
         fixtures/descent.docx   # generated; the only source of wrapper-nested math
 
