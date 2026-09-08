@@ -21,6 +21,16 @@ from .canonical import (
     patch_text,
     project,
 )
+from .edit import (
+    MathTextEdit,
+    MathTextReceipt,
+    MathTextTarget,
+    PreimageMismatch,
+    TargetNotFound,
+    apply_math_text_edit,
+    skeleton_digest,
+    text_targets,
+)
 from .digest import (
     C14N_KWARGS,
     AmbiguousInsertion,
@@ -60,6 +70,14 @@ from .spans import (
 __version__ = "0.1.0"
 
 __all__ = [
+    "text_targets",
+    "skeleton_digest",
+    "apply_math_text_edit",
+    "TargetNotFound",
+    "PreimageMismatch",
+    "MathTextTarget",
+    "MathTextReceipt",
+    "MathTextEdit",
     "affinity_from_host",
     "AuthorizedTextEdit",
     "AmbiguousInsertion",
