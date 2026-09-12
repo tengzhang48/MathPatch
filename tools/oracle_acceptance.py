@@ -63,12 +63,13 @@ BUCKETS = [
 #: These cases close that gap, as `descent.docx` does for the drift gate.
 SYNTHETIC_CASES = [
     # (locator, preimage, post_state, expected outcome, why)
-    ("body/p/4", "in-run tail", "IN-RUN EDITED tail", "boundary mismatch",
-     "F15: editing a run that CONTAINS an inline equation relocates the equation. "
-     "safety sees no math (it scans only the paragraph's direct children), "
-     "_rewrite_run_text collapses the run's w:t around the equation, and the engine's "
-     "own conformance check cannot see it because math is zero width in canonical text. "
-     "A boundary mismatch here is the ORACLE WORKING, and is the expected outcome."),
+    ("body/p/4", "in-run tail", "IN-RUN EDITED tail", "patch refused (nothing to check)",
+     "F15, now FIXED in ArtifactCert (4da884e): a run whose descendants include Office "
+     "Math is refused outright, so the equation can no longer be relocated by editing "
+     "the run's text. This case guards the FIX: a refusal is the expected outcome, and "
+     "a boundary mismatch here again would mean the regression returned. Between "
+     "b330bf8 and the fix it read 'boundary mismatch', and this test is what noticed "
+     "the behaviour change."),
     ("body/p/1", "The deformation ", "The measured deformation ", "verified",
      "F12: prose edit before an equation moves its boundary without moving it"),
     ("body/p/6", "pair ", "matched pair ", "verified",

@@ -1,4 +1,4 @@
-b330bf8fd109da5289e284b577f37a9b1f8a2ae3
+20c087601777807059d7e7c6835df96e53940a63
 # ArtifactCert commit this milestone is verified against.
 #
 # Every claim in PLAN.md about what ArtifactCert "currently" does refers to THIS
@@ -12,6 +12,12 @@ b330bf8fd109da5289e284b577f37a9b1f8a2ae3
 #
 # To advance the target: fetch, read the new tree, re-derive the findings in PLAN.md
 # section 3, then update this hash in the same commit.
+#
+# Advanced 2026-09-12 from b330bf8 to 20c0876. safety.py CHANGED (+27/-1): commit
+# 4da884e fixes MathPatch F15 by refusing any target paragraph whose run descendants
+# include Office Math. engine.py, regression.py, docx_manifest.py and opc_xml.py are
+# byte-identical. F15 re-verified as no longer reproducing; the acceptance fixture now
+# expects a refusal there and so guards the fix.
 #
 # Advanced 2026-09-08 from 0992741 to b330bf8. No re-derivation was needed: the four
 # intervening commits touch only UI, docs and tests, and every file MathPatch depends on

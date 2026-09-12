@@ -1,7 +1,7 @@
 # MathPatch — Plan
 
 **Status:** M0, M0.1 and M1 item 1 (`ParagraphProjection`) complete. Verified against the
-**pinned** ArtifactCert commit `b330bf8` (2026-09-08), named in `INTEGRATION_TARGET.txt`.
+**pinned** ArtifactCert commit `20c0876` (2026-09-12), named in `INTEGRATION_TARGET.txt`.
 The pin was advanced from `0992741` on 2026-09-08 after verifying the integration surface is
 byte-identical between the two. See the reading discipline in section 3.
 **Relationship to ArtifactCert:** MathPatch is developed as an independent package and
@@ -446,11 +446,32 @@ Comments and property elements consume no structural index either, so adding one
 identity. The gate now checks structural paths are unique per span and the same depth as the raw
 path; making them collide yields FAIL=10 on one manuscript.
 
-### F15 — Editing a run that contains an inline equation RELOCATES the equation
+### F15 — Editing a run that contains an inline equation RELOCATES the equation — **FIXED**
 
-Found by running the oracle against real patches (M1 item 2's acceptance test). This is a
-defect in ArtifactCert at the pinned commit, not in MathPatch, and the oracle catching it is
-the clearest justification the oracle has.
+**Fixed in ArtifactCert on 2026-09-12, commit `4da884e` "Refuse edits to runs containing
+nested Office Math"**, with 277 lines of tests. `safety.analyze_paragraph` now refuses any
+target paragraph in which a run's descendants include math:
+
+    PATCH_NOT_SAFE_MATH_IN_TARGET -- "A run in the target paragraph contains Office Math;
+    the equation's position inside that run cannot be proven preserved, so this edit must
+    be made in Word."
+
+Their own comment records the provenance: *"Reported as MathPatch F15 against b330bf8 -- a
+direct run holding w:t/oMath/w:t accepted an edit to the leading text and shifted the math
+boundary from canonical offset 7 to 18, while the current regression invariant still
+reported holds=true."* Ordinary math as a direct paragraph child stays editable beside
+prose; only the unusual nested shape fails closed.
+
+Verified against `origin/main`: the reproduction no longer applies the edit. The acceptance
+test's fixture case now expects a **refusal**, so it guards the fix — a boundary mismatch
+there again means the regression returned. That change of outcome is what flagged the fix
+in the first place, which is the behaviour the expectation mechanism was built for.
+
+The original finding follows, kept as the record.
+
+Found by running the oracle against real patches (M1 item 2's acceptance test). This was a
+defect in ArtifactCert at the then-pinned commit, not in MathPatch, and the oracle catching
+it is the clearest justification the oracle has.
 
     BEFORE run children: ["t('in-run ')", 'oMath', "t('tail')"]     boundary (7,)
     safety.analyze_paragraph(p, 0, 6): ok=True
