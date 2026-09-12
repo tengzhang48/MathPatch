@@ -1,10 +1,10 @@
 {
   "artifactcert": {
-    "commit": "b330bf8fd109da5289e284b577f37a9b1f8a2ae3",
-    "origin_main": "b330bf8fd109da5289e284b577f37a9b1f8a2ae3",
-    "origin_main_date": "2026-09-08T00:08:15+00:00",
-    "pinned_target": "b330bf8fd109da5289e284b577f37a9b1f8a2ae3",
-    "src": "/tmp/pin-ev/src"
+    "commit": "20c087601777807059d7e7c6835df96e53940a63",
+    "origin_main": "20c087601777807059d7e7c6835df96e53940a63",
+    "origin_main_date": "2026-09-12T11:51:28+00:00",
+    "pinned_target": "20c087601777807059d7e7c6835df96e53940a63",
+    "src": "/tmp/wt-ev2/src"
   },
   "checks": {
     "note": "drift gate and C14N probe are run by tools/verify_m0.sh; this record binds the inputs they were run against.",
@@ -53,6 +53,16 @@
     },
     {
       "alias": "doc-05",
+      "bytes": 92880978,
+      "detection_disagreements": 0,
+      "math_paragraph_count": 141,
+      "math_span_count": 316,
+      "paragraph_count": 933,
+      "paragraphs_with_anomalies": 0,
+      "sha256": "2261e3105faa1692d23e8e5b7a687548e3b06a0177abc2f5c74df3d10794f16b"
+    },
+    {
+      "alias": "doc-06",
       "bytes": 13733878,
       "detection_disagreements": 0,
       "math_paragraph_count": 51,
@@ -62,7 +72,7 @@
       "sha256": "bf53aa7e5fa3aa287f9e239251a8a1975a8e0064e170d3f9ce9ff5690588b356"
     },
     {
-      "alias": "doc-06",
+      "alias": "doc-07",
       "bytes": 14717473,
       "detection_disagreements": 0,
       "math_paragraph_count": 19,
@@ -72,7 +82,7 @@
       "sha256": "898cf4c3098e3451acd716960b80f74f119c19e347b0e45161670ebf68bd4890"
     },
     {
-      "alias": "doc-07",
+      "alias": "doc-08",
       "bytes": 13249643,
       "detection_disagreements": 0,
       "math_paragraph_count": 19,
@@ -91,14 +101,14 @@
     "path": "tests/fixtures/descent.docx",
     "sha256": "b9c7ce31f6ceb07b05b8d00668f1f7145ed1f4ad424d6291c6e1e3fc99f60317"
   },
-  "generated_utc": "2026-09-08T00:48:18+00:00",
+  "generated_utc": "2026-09-12T12:10:03+00:00",
   "mathpatch": {
     "c14n_kwargs": {
       "exclusive": true,
       "with_comments": true
     },
     "canonical_text_contract_version": "1.3.0",
-    "commit": "52d1c8c916f85bfaec2116f29cb4de6048de212b",
+    "commit": "69514186c441dfc2b90f79f71bd2be661bcac25e",
     "dirty": false,
     "version": "0.1.0"
   },
