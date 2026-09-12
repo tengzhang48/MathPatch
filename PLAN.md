@@ -954,8 +954,36 @@ element, covering the fifteen types of F16. Needed for a STRUCTURAL edit (adding
 subscript where none existed), and for verifying intent semantically rather than
 textually: reparse the patched span and compare its AST to the intended one.
 
-**M2c — the demonstration.** One real manuscript equation, one symbol changed, the
-smallest original node mutated, both oracles green, and the result opened in Word.
+**M2c — the demonstration.** **DONE on the machine's side (2026-09-12); the Word check
+is outstanding and is the only thing that can close it.**
+
+`tools/make_demo_docx.py` took Hierarchical Jamming, changed one subscript in a real
+equation -- `ρ = E₁/E₂` becoming `ρ = E₁/Eₘ`, at `body/p/27` span 3, `m:t` #5 -- and wrote
+a new `.docx`. Ten checks, all passing:
+
+    package     part list identical (46 parts); every other part payload-identical
+    wellformed  every XML part reparses under the hardened parser
+    rels        all 27 referenced relationship ids resolve
+    reader      python-docx reopens it (493 body paragraphs) -- the same library
+                ArtifactCert uses to reread a patched document
+    content     exactly one paragraph's C14N digest changed, out of 493
+    equation    span count unchanged; target holds the new text; skeleton digest
+                unchanged, so nothing else inside the equation moved; every other
+                span's identity unchanged
+
+Reading the equation back out of the written file confirms it end to end.
+
+**What none of that proves.** No Word exists on this machine, so nothing here establishes
+that Word opens the file, renders the equation, or declines to "repair" it. That gap is
+stated in the tool's own output rather than papered over. A human must confirm: Word opens
+it without a repair prompt; the changed equation renders with the new symbol; its font,
+size and spacing match the surrounding equations; and every other equation is untouched.
+
+Until then M2c is **provisional**, and M2 integration into ArtifactCert stays blocked --
+the read-only M1 integration does not depend on it, since MathPatch writes nothing there.
+
+LibreOffice would be an automated proxy for the rendering check and is installable on this
+box, but it is a large system change and it is not Word; it is offered, not assumed.
 
 ### M3 — construction
 
@@ -1253,6 +1281,7 @@ payload hashes, protected-span C14N digests, ArtifactCert binding re-verificatio
         oracle_acceptance.py       # M1 item 2 acceptance: 44/44 real, F15 found
         omml_inventory.py          # F16: scopes the reader from real documents
         edit_acceptance.py         # M2a on all 2370 real m:t, 4 replacement shapes
+        make_demo_docx.py          # M2c: writes a real edited manuscript, 10 checks
     tests/
         fixtures/descent.docx   # generated; the only source of wrapper-nested math
 
